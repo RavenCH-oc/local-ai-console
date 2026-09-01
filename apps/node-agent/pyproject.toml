@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-ai-console-node-agent"
+dynamic = ["version"]
+description = "Local AI Console Ubuntu Node Agent foundation"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<1.0",
+  "uvicorn[standard]>=0.30,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27,<1.0",
+]
+
+[project.scripts]
+local-ai-console-node-agent = "local_ai_console_node.main:run"
+
+[tool.setuptools.dynamic]
+version = { attr = "local_ai_console_node.version.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

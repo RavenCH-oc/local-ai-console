@@ -6,7 +6,7 @@ The planned architecture pairs a Windows 11 controller with a Linux/Ubuntu LLM n
 
 ## Development status
 
-This repository currently contains a public-safe project baseline, runtime-data boundary contract, shared architecture contracts, and a minimal Windows Controller API foundation. The Control API currently exposes only local health, version, and runtime-layout metadata; no model runtime, node agent, database, or workflow feature is available yet.
+This repository currently contains a public-safe project baseline, runtime-data boundary contract, shared architecture contracts, a minimal Windows Controller API foundation, and a minimal Linux Node Agent foundation. The current APIs expose only health, version, and safe local metadata; no model runtime, database, controller-to-node integration, or workflow feature is available yet.
 
 ## Public repository boundary
 
@@ -14,7 +14,7 @@ This repository contains code and sanitized templates only. Do not commit runtim
 
 See [Runtime data boundary](docs/runtime-data-boundary.md) for the Controller Runtime and Node Runtime contract, and [Shared architecture contracts](docs/architecture-contracts.md) for the language-neutral contract layer.
 
-For local Control API setup and development commands, see [`apps/control-api/README.md`](apps/control-api/README.md).
+For local Control API setup and development commands, see [`apps/control-api/README.md`](apps/control-api/README.md). For Linux Node Agent setup and its read-only host metadata boundary, see [`apps/node-agent/README.md`](apps/node-agent/README.md).
 
 ## License
 
