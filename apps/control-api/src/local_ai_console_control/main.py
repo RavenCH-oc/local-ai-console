@@ -9,12 +9,14 @@ from typing import Mapping
 import uvicorn
 from fastapi import FastAPI
 
+from local_ai_console_control.api.prompt_workbench import router as prompt_workbench_router
 from local_ai_console_control.api.system import APPLICATION_NAME, SERVICE_ROLE, router as system_router
 from local_ai_console_control.config.runtime_paths import (
     find_repository_root,
     initialize_runtime_layout,
     resolve_runtime_paths,
 )
+from local_ai_console_control.persistence.database import database_path_for_runtime_data, open_database
 from local_ai_console_control.version import __version__
 
 
@@ -39,10 +41,17 @@ def create_app(
         )
         initialize_runtime_layout(runtime_paths)
         app.state.runtime_paths = runtime_paths
-        yield
+        database = open_database(database_path_for_runtime_data(runtime_paths.data))
+        app.state.database = database
+        try:
+            yield
+        finally:
+            database.dispose()
 
     app = FastAPI(title=APPLICATION_NAME, version=__version__, lifespan=lifespan)
     app.include_router(system_router)
+    app.include_router(system_router, prefix="/api")
+    app.include_router(prompt_workbench_router)
     app.state.service_role = SERVICE_ROLE
     return app
 

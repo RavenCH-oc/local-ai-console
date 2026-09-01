@@ -9,7 +9,9 @@ description = "Local AI Console Windows Controller API foundation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "alembic>=1.14,<2.0",
   "fastapi>=0.115,<1.0",
+  "sqlalchemy>=2.0,<3.0",
   "uvicorn[standard]>=0.30,<1.0",
 ]
 
@@ -20,6 +22,7 @@ dev = [
 
 [project.scripts]
 local-ai-console-control-api = "local_ai_console_control.main:run"
+local-ai-console-control-api-migrate = "local_ai_console_control.persistence.migrate:run"
 
 [tool.setuptools.dynamic]
 version = { attr = "local_ai_console_control.version.__version__" }

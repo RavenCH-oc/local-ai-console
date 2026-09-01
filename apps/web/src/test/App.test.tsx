@@ -10,6 +10,21 @@ vi.mock("../api/controlApi", () => ({
     health: vi.fn(),
     version: vi.fn(),
     runtimeInfo: vi.fn(),
+    listPromptProjects: vi.fn(),
+    createPromptProject: vi.fn(),
+    getPromptProject: vi.fn(),
+    renamePromptProject: vi.fn(),
+    archivePromptProject: vi.fn(),
+    listPromptSessions: vi.fn(),
+    createPromptSession: vi.fn(),
+    listPromptMessages: vi.fn(),
+    appendPromptMessage: vi.fn(),
+    getPromptProjectState: vi.fn(),
+    updatePromptProjectState: vi.fn(),
+    listPromptRevisions: vi.fn(),
+    createPromptRevision: vi.fn(),
+    acceptPromptRevision: vi.fn(),
+    discardPromptRevision: vi.fn(),
   },
 }));
 
@@ -46,6 +61,7 @@ function configureAvailableApi() {
   mockedControlApi.health.mockResolvedValue(healthResponse);
   mockedControlApi.version.mockResolvedValue(versionResponse);
   mockedControlApi.runtimeInfo.mockResolvedValue(runtimeInfoResponse);
+  mockedControlApi.listPromptProjects.mockResolvedValue([]);
 }
 
 function renderAt(path: string) {
@@ -77,7 +93,7 @@ describe("Local AI Console web shell", () => {
     expect(screen.getByText("Not connected yet")).toBeInTheDocument();
   });
 
-  it("navigates to the first-class Prompt Workbench route and shows its three-part skeleton", async () => {
+  it("navigates to the first-class Prompt Workbench route and shows its persistent three-part workspace", async () => {
     const user = userEvent.setup();
     renderAt("/");
 
@@ -85,10 +101,12 @@ describe("Local AI Console web shell", () => {
 
     expect(await screen.findByRole("heading", { name: "Prompt Workbench" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Projects" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Discussion / Request" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Discussion / Project State" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Prompt Artifact" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Prompt Workbench" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("button", { name: /New Project/ })).toBeDisabled();
+    expect(await screen.findByText("No projects yet.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New Project" })).toBeEnabled();
+    expect(screen.getByLabelText("New project title")).toBeEnabled();
     expect(screen.getByLabelText("Mode")).toBeDisabled();
   });
 

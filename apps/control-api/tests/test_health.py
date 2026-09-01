@@ -9,8 +9,13 @@ import unittest
 from fastapi.testclient import TestClient
 
 from local_ai_console_control.main import create_app
-from local_ai_console_control.config.runtime_paths import RuntimeHomeInsideRepositoryError
+from local_ai_console_control.config.runtime_paths import (
+    RuntimeHomeInsideRepositoryError,
+    initialize_runtime_layout,
+    resolve_runtime_paths,
+)
 from local_ai_console_control.version import __version__
+from local_ai_console_control.persistence.database import database_path_for_runtime_data, upgrade_database
 
 
 class SystemEndpointTests(unittest.TestCase):
@@ -18,6 +23,13 @@ class SystemEndpointTests(unittest.TestCase):
         repository = temporary_directory / "repository"
         repository.mkdir()
         runtime_root = temporary_directory / "controller-runtime"
+        runtime_paths = resolve_runtime_paths(
+            repository_root=repository,
+            environ={"LOCAL_AI_CONSOLE_HOME": str(runtime_root)},
+            platform_name="non_windows",
+        )
+        initialize_runtime_layout(runtime_paths)
+        upgrade_database(database_path_for_runtime_data(runtime_paths.data))
         app = create_app(
             repository_root=repository,
             environ={
@@ -32,9 +44,12 @@ class SystemEndpointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             with self.create_client(Path(temporary_directory)) as client:
                 health_response = client.get("/health")
+                proxied_health_response = client.get("/api/health")
                 version_response = client.get("/version")
 
             self.assertEqual(health_response.status_code, 200)
+            self.assertEqual(proxied_health_response.status_code, 200)
+            self.assertEqual(proxied_health_response.json(), health_response.json())
             self.assertEqual(
                 health_response.json(),
                 {"status": "ok", "service": "control-api", "version": __version__},

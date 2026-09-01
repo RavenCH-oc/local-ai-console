@@ -260,7 +260,8 @@ textarea:disabled {
 }
 
 .workbench-controls select,
-.workbench-panel textarea {
+.workbench-panel textarea,
+.workbench-panel input {
   min-width: 220px;
   border: 1px solid #475569;
   border-radius: 6px;
@@ -278,6 +279,10 @@ textarea:disabled {
   background: #172033;
 }
 
+.prompt-workbench-grid--active {
+  grid-template-columns: minmax(220px, 0.85fr) minmax(300px, 1.2fr) minmax(280px, 1fr);
+}
+
 .workbench-panel {
   min-width: 0;
   padding: 20px;
@@ -292,6 +297,161 @@ textarea:disabled {
   width: 100%;
   min-width: 0;
   resize: vertical;
+}
+
+.workbench-panel input {
+  width: 100%;
+  min-width: 0;
+}
+
+.inline-form,
+.stacked-form {
+  display: grid;
+  gap: 10px;
+}
+
+.inline-form {
+  margin: 14px 0;
+}
+
+.inline-form label,
+.stacked-form label {
+  display: grid;
+  gap: 6px;
+  color: #cbd5e1;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.stacked-form {
+  margin-top: 20px;
+}
+
+.stacked-form h3 {
+  margin: 0;
+}
+
+.workbench-notice {
+  margin: 16px 0;
+  border: 1px solid #854d0e;
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: #fef3c7;
+  background: #3f2b11;
+}
+
+.project-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.project-list-item {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  padding: 10px;
+  color: #e2e8f0;
+  text-align: left;
+  background: #0f172a;
+}
+
+.project-list-item:hover,
+.project-list-item.is-selected {
+  border-color: #93c5fd;
+  background: #1e293b;
+}
+
+.project-list-item small {
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+
+.project-actions {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #334155;
+}
+
+.danger-button {
+  justify-self: start;
+  border: 1px solid #b91c1c;
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: #fecaca;
+  background: #450a0a;
+  font-size: 0.8rem;
+}
+
+.danger-button:hover {
+  background: #7f1d1d;
+}
+
+.discussion-history,
+.revision-summary,
+.revision-list {
+  margin-top: 16px;
+}
+
+.discussion-history h3,
+.revision-summary h3 {
+  margin: 0 0 8px;
+}
+
+.discussion-message,
+.revision-item {
+  margin-top: 8px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 10px;
+  background: #0f172a;
+}
+
+.discussion-message strong,
+.revision-item strong {
+  color: #bfdbfe;
+  font-size: 0.78rem;
+  text-transform: capitalize;
+}
+
+.discussion-message p,
+.revision-item p {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.state-editor,
+.revision-form {
+  padding-top: 18px;
+  border-top: 1px solid #334155;
+}
+
+.revision-item-heading,
+.revision-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.revision-item-heading span {
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+
+.revision-actions {
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+
+.revision-label {
+  color: #94a3b8;
+  font-size: 0.8rem;
+  font-weight: 700;
 }
 
 .workbench-panel button,
@@ -417,6 +577,10 @@ textarea:disabled {
 
   .workspace {
     padding: 32px;
+  }
+
+  .prompt-workbench-grid--active {
+    grid-template-columns: minmax(210px, 0.8fr) minmax(320px, 1.1fr) minmax(260px, 1fr);
   }
 
   .foundation-grid {

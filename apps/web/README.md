@@ -1,8 +1,10 @@
 # Local AI Console Web
 
-This is the Windows Controller web foundation for Local AI Console. It uses React, TypeScript, and Vite to provide a desktop-first application shell, browser navigation, safe Controller metadata views, and a Prompt Workbench placeholder.
+This is the Windows Controller web foundation for Local AI Console. It uses React, TypeScript, and Vite to provide a desktop-first application shell, browser navigation, safe Controller metadata views, and a private Prompt Workbench workspace.
 
-It does not provide chat, prompt generation, persistence, model controls, Node Agent connectivity, authentication, or third-party integrations.
+The Prompt Workbench can manage local Prompt Projects, manual discussion notes, structured project state, and manual proposed/accepted/discarded revisions through the Control API. Browser refresh refetches from the Controller Runtime database; no product data is stored in LocalStorage.
+
+It does not provide chat, prompt generation, model controls, Node Agent connectivity, authentication, ComfyUI, quality evaluation, or third-party integrations.
 
 ## Development
 
@@ -19,6 +21,8 @@ npm run dev
 ```
 
 During development, browser requests to `/api/*` are proxied to `http://127.0.0.1:8000`. This keeps the initial local development setup same-origin without introducing a production CORS architecture. The proxy target is deliberately a generic loopback address; do not replace it with private network or host information in committed files.
+
+Before starting the web application against a fresh Controller Runtime, run `local-ai-console-control-api-migrate` in the Control API environment. The Web UI never creates or migrates the database itself.
 
 Run the checks:
 
