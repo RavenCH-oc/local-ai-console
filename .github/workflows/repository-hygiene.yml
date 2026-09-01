@@ -1,0 +1,36 @@
+name: Repository hygiene
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-baseline:
+    name: Verify public-safe baseline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify environment-file boundary
+        shell: bash
+        run: |
+          test -f .env.example
+          test -f .gitignore
+          git check-ignore -q --no-index .env
+          if git check-ignore -q --no-index .env.example; then
+            echo ".env.example must remain trackable."
+            exit 1
+          fi
+
+      - name: Reject tracked private runtime file types
+        shell: bash
+        run: |
+          if git ls-files | grep -E '(^|/)(\.env|id_rsa|id_rsa\.pub|id_ed25519|id_ed25519\.pub|runtime|runtime-data|local-data|data|state|storage|models|secrets|credentials)(/|$)|\.(pem|key|p12|pfx|keystore|db|sqlite|sqlite3|gguf|ggml|safetensors|ckpt|pt|pth|onnx|engine|bin)$'; then
+            echo "Tracked private environment, credential, database, or model files are not allowed."
+            exit 1
+          fi

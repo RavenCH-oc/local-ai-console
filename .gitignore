@@ -1,0 +1,103 @@
+# Environment files: commit only documented, sanitized examples.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Python bytecode, tooling caches, and virtual environments.
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.hypothesis/
+**/.tox/
+**/.nox/
+**/.coverage
+**/htmlcov/
+**/*.egg-info/
+**/.venv/
+**/venv/
+
+# Node.js dependencies, build output, and test coverage.
+**/node_modules/
+**/.vite/
+**/dist/
+**/build/
+**/coverage/
+*.tsbuildinfo
+
+# Editor, IDE, and operating-system files. Shared editor settings can still be added deliberately.
+.idea/
+.vs/
+*.code-workspace
+*.swp
+*.swo
+*~
+Thumbs.db
+Desktop.ini
+
+# Local databases and their journal files.
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+
+# Logs, caches, backups, and temporary local output.
+/logs/
+**/.cache/
+/cache/
+*.log
+*.log.*
+*.bak
+*.backup
+*.tmp
+*.orig
+*.old
+**/backups/
+
+# Private runtime state and generated local artifacts.
+/runtime/
+/runtime-data/
+/local-data/
+/data/
+/state/
+/storage/
+/generated/
+/generated-images/
+/outputs/
+/artifacts/
+/secrets/
+/credentials/
+
+# Private configuration variants and credential material.
+/config/local/
+/config/private/
+/config/*.local.*
+/config/*.private.*
+/config/*.secret.*
+/config/*credentials*
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+
+# Local AI model weights and runtime binaries.
+/models/
+*.gguf
+*.ggml
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.engine
+*.bin
