@@ -82,6 +82,7 @@ Desktop.ini
 /config/*.private.*
 /config/*.secret.*
 /config/*credentials*
+/config/llm-runtimes.json
 *.pem
 *.key
 *.p12

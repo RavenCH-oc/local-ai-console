@@ -1,6 +1,6 @@
 # Local AI Console Control API
 
-This is the Windows Controller API foundation for Local AI Console. It resolves and initializes the Controller Runtime layout, exposes safe local metadata, and persists Prompt Workbench data in private runtime SQLite storage. It does not load a model, contact a node, execute a shell command, or generate a prompt.
+This is the Windows Controller API foundation for Local AI Console. It resolves and initializes the Controller Runtime layout, exposes safe local metadata, persists Prompt Workbench data in private runtime SQLite storage, and includes a private llama.cpp-compatible runtime bridge. It does not load a model at startup, contact a node, execute a shell command, or expose a generation endpoint.
 
 ## Development on Windows PowerShell
 
@@ -36,8 +36,11 @@ python -m unittest discover -s tests -v
 - `GET /runtime/info`: local runtime path metadata and initialization status. It does not return environment variables, credentials, configuration values, prompts, chats, or model data.
 - `/api/health`, `/api/version`, and `/api/runtime/info`: compatibility routes for the Web development proxy; the original root routes remain available.
 - `/api/prompt-projects`, `/api/prompt-sessions`, and `/api/prompt-revisions`: private local Prompt Workbench project, session, message, structured state, and revision resources.
+- `GET /api/llm/status`: safe Main/Utility runtime state only; it does not initiate a network request or return targets, credentials, model paths, or raw provider errors.
+- `POST /api/llm/probe`: explicitly probes only the runtime slots already configured in the private Controller Runtime. It accepts no caller-supplied host or URL.
 
 Prompt Workbench resources are private runtime data. The API accepts manually entered notes and revisions but does not call an LLM, generate prompts, evaluate quality, or connect to ComfyUI.
 
 For the public/private boundary and canonical layout, see [`docs/runtime-data-boundary.md`](../../docs/runtime-data-boundary.md).
 For the Prompt Workbench persistence and lifecycle design, see [`docs/prompt-workbench-domain.md`](../../docs/prompt-workbench-domain.md).
+For the private LLM configuration format, provider boundary, and runtime states, see [`docs/llm-runtime-bridge.md`](../../docs/llm-runtime-bridge.md).

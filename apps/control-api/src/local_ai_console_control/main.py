@@ -9,6 +9,7 @@ from typing import Mapping
 import uvicorn
 from fastapi import FastAPI
 
+from local_ai_console_control.api.llm import router as llm_router
 from local_ai_console_control.api.prompt_workbench import router as prompt_workbench_router
 from local_ai_console_control.api.system import APPLICATION_NAME, SERVICE_ROLE, router as system_router
 from local_ai_console_control.config.runtime_paths import (
@@ -17,6 +18,7 @@ from local_ai_console_control.config.runtime_paths import (
     resolve_runtime_paths,
 )
 from local_ai_console_control.persistence.database import database_path_for_runtime_data, open_database
+from local_ai_console_control.llm.bridge import LlmRuntimeBridge
 from local_ai_console_control.version import __version__
 
 
@@ -43,15 +45,19 @@ def create_app(
         app.state.runtime_paths = runtime_paths
         database = open_database(database_path_for_runtime_data(runtime_paths.data))
         app.state.database = database
+        llm_runtime_bridge = LlmRuntimeBridge(config_directory=runtime_paths.config, environ=environ)
+        app.state.llm_runtime_bridge = llm_runtime_bridge
         try:
             yield
         finally:
+            await llm_runtime_bridge.aclose()
             database.dispose()
 
     app = FastAPI(title=APPLICATION_NAME, version=__version__, lifespan=lifespan)
     app.include_router(system_router)
     app.include_router(system_router, prefix="/api")
     app.include_router(prompt_workbench_router)
+    app.include_router(llm_router)
     app.state.service_role = SERVICE_ROLE
     return app
 

@@ -10,6 +10,8 @@ vi.mock("../api/controlApi", () => ({
     health: vi.fn(),
     version: vi.fn(),
     runtimeInfo: vi.fn(),
+    getLlmRuntimeStatus: vi.fn(),
+    probeLlmRuntimes: vi.fn(),
     listPromptProjects: vi.fn(),
     createPromptProject: vi.fn(),
     getPromptProject: vi.fn(),
@@ -57,10 +59,29 @@ const runtimeInfoResponse = {
   },
 };
 
+const llmRuntimeStatus = {
+  main: {
+    configured: false,
+    state: "unconfigured" as const,
+    provider: null,
+    expected_model_alias_configured: false,
+    error_code: null,
+  },
+  utility: {
+    configured: false,
+    state: "unavailable" as const,
+    provider: null,
+    expected_model_alias_configured: false,
+    error_code: null,
+  },
+};
+
 function configureAvailableApi() {
   mockedControlApi.health.mockResolvedValue(healthResponse);
   mockedControlApi.version.mockResolvedValue(versionResponse);
   mockedControlApi.runtimeInfo.mockResolvedValue(runtimeInfoResponse);
+  mockedControlApi.getLlmRuntimeStatus.mockResolvedValue(llmRuntimeStatus);
+  mockedControlApi.probeLlmRuntimes.mockResolvedValue(llmRuntimeStatus);
   mockedControlApi.listPromptProjects.mockResolvedValue([]);
 }
 
@@ -90,7 +111,8 @@ describe("Local AI Console web shell", () => {
     expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("aria-current", "page");
     expect(await screen.findByText("Controller: Online")).toBeInTheDocument();
-    expect(screen.getByText("Not connected yet")).toBeInTheDocument();
+    expect(await screen.findByText("Unconfigured")).toBeInTheDocument();
+    expect(screen.getByText("Utility LLM")).toBeInTheDocument();
   });
 
   it("navigates to the first-class Prompt Workbench route and shows its persistent three-part workspace", async () => {

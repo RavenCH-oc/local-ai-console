@@ -27,6 +27,21 @@ export interface RuntimeInfoResponse {
   paths: RuntimeLayoutResponse;
 }
 
+export type LlmRuntimeSlotState = "unconfigured" | "unavailable" | "checking" | "loading" | "ready" | "error";
+
+export interface LlmRuntimeSlotStatus {
+  configured: boolean;
+  state: LlmRuntimeSlotState;
+  provider: string | null;
+  expected_model_alias_configured: boolean;
+  error_code: string | null;
+}
+
+export interface LlmRuntimeStatus {
+  main: LlmRuntimeSlotStatus;
+  utility: LlmRuntimeSlotStatus;
+}
+
 export type PromptProjectStatus = "active" | "archived";
 export type PromptSessionStatus = "active" | "closed";
 export type PromptMessageRole = "user" | "assistant" | "system" | "tool";
@@ -146,6 +161,8 @@ export const controlApi = {
   health: (): Promise<HealthResponse> => request<HealthResponse>("/health"),
   version: (): Promise<VersionResponse> => request<VersionResponse>("/version"),
   runtimeInfo: (): Promise<RuntimeInfoResponse> => request<RuntimeInfoResponse>("/runtime/info"),
+  getLlmRuntimeStatus: (): Promise<LlmRuntimeStatus> => request<LlmRuntimeStatus>("/llm/status"),
+  probeLlmRuntimes: (): Promise<LlmRuntimeStatus> => request<LlmRuntimeStatus>("/llm/probe", { method: "POST" }),
   listPromptProjects: (): Promise<PromptProject[]> => request<PromptProject[]>("/prompt-projects"),
   createPromptProject: (input: CreatePromptProjectInput): Promise<PromptProject> =>
     request<PromptProject>("/prompt-projects", { method: "POST", body: input }),

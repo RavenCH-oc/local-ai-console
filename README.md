@@ -6,13 +6,13 @@ The planned architecture pairs a Windows 11 controller with a Linux/Ubuntu LLM n
 
 ## Development status
 
-This repository currently contains a public-safe project baseline, runtime-data boundary contract, shared architecture contracts, a Windows Controller API with private Prompt Workbench SQLite persistence, a minimal Linux Node Agent foundation, and a desktop-first React web shell. Prompt Workbench currently supports manual project, discussion, state, and revision lifecycle management; no model runtime, controller-to-node integration, chat, prompt generation, or quality evaluation is available yet.
+This repository currently contains a public-safe project baseline, runtime-data boundary contract, shared architecture contracts, a Windows Controller API with private Prompt Workbench SQLite persistence, a minimal Linux Node Agent foundation, a desktop-first React web shell, and an LLM runtime bridge foundation. Prompt Workbench currently supports manual project, discussion, state, and revision lifecycle management. The bridge supports private llama.cpp-compatible runtime configuration and explicit status probes, but no model generation endpoint, controller-to-node integration, chat workflow, prompt generation, or quality evaluation is available yet.
 
 ## Public repository boundary
 
 This repository contains code and sanitized templates only. Do not commit runtime data, credentials, chat history, private prompts, host information, actual model paths, generated artifacts, or model files. Use local ignored files for private configuration when later development phases introduce runtime paths.
 
-See [Runtime data boundary](docs/runtime-data-boundary.md) for the Controller Runtime and Node Runtime contract, and [Shared architecture contracts](docs/architecture-contracts.md) for the language-neutral contract layer.
+See [Runtime data boundary](docs/runtime-data-boundary.md) for the Controller Runtime and Node Runtime contract, [Shared architecture contracts](docs/architecture-contracts.md) for the language-neutral contract layer, and [LLM runtime bridge](docs/llm-runtime-bridge.md) for the private runtime configuration and safe status boundary.
 
 For local Control API setup and development commands, see [`apps/control-api/README.md`](apps/control-api/README.md). For Linux Node Agent setup and its read-only host metadata boundary, see [`apps/node-agent/README.md`](apps/node-agent/README.md). For the React web shell and its local development proxy, see [`apps/web/README.md`](apps/web/README.md). For Prompt Workbench persistence and revision semantics, see [`docs/prompt-workbench-domain.md`](docs/prompt-workbench-domain.md).
 

@@ -1,0 +1,349 @@
+"""A narrow, testable adapter for llama.cpp's OpenAI-compatible HTTP surface."""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator, Mapping
+from dataclasses import dataclass
+from enum import StrEnum
+import json
+
+import httpx
+
+from local_ai_console_control.llm.config import LlmRuntimeSlotConfig
+from local_ai_console_control.llm.types import (
+    JsonValue,
+    LLMGenerationRequest,
+    LLMGenerationResult,
+    LLMStreamEvent,
+    LLMStreamEventKind,
+    LLMTokenCountResult,
+    LLMUsage,
+    ReasoningMode,
+)
+
+
+class LlamaCppClientErrorKind(StrEnum):
+    """Stable, safe error categories; response text and endpoint details never escape."""
+
+    AUTHENTICATION_FAILURE = "authentication_failure"
+    CONNECTION_FAILURE = "connection_failure"
+    TIMEOUT = "timeout"
+    UNEXPECTED_RESPONSE = "unexpected_response"
+    PROVIDER_FAILURE = "provider_failure"
+    MODEL_MISMATCH = "model_mismatch"
+    MALFORMED_STREAM = "malformed_stream"
+    UNEXPECTED_STREAM_END = "unexpected_stream_end"
+
+
+class LlamaCppClientError(RuntimeError):
+    def __init__(self, kind: LlamaCppClientErrorKind) -> None:
+        self.kind = kind
+        super().__init__(f"llama.cpp request failed: {kind.value}")
+
+
+class LlamaCppReadiness(StrEnum):
+    READY = "ready"
+    LOADING = "loading"
+    ERROR = "error"
+
+
+@dataclass(frozen=True, slots=True)
+class LlamaCppProbe:
+    readiness: LlamaCppReadiness
+    error_code: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LlamaCppModelInfo:
+    model_ids: tuple[str, ...]
+
+
+class LlamaCppClient:
+    """Translate generic requests while retaining cancellation and timeout semantics from httpx."""
+
+    def __init__(
+        self,
+        *,
+        slot_config: LlmRuntimeSlotConfig,
+        http_client: httpx.AsyncClient,
+        api_key: str | None = None,
+    ) -> None:
+        self._slot_config = slot_config
+        self._http_client = http_client
+        self._api_key = api_key
+        self._timeout = httpx.Timeout(
+            timeout=slot_config.timeouts.read_seconds,
+            connect=slot_config.timeouts.connect_seconds,
+        )
+
+    async def probe(self) -> LlamaCppProbe:
+        """Check a configured runtime only when an explicit probe was requested."""
+
+        try:
+            response = await self._http_client.get(
+                self._endpoint("/health"), headers=self._headers(), timeout=self._timeout
+            )
+        except httpx.TimeoutException:
+            return LlamaCppProbe(LlamaCppReadiness.ERROR, LlamaCppClientErrorKind.TIMEOUT.value)
+        except httpx.RequestError:
+            return LlamaCppProbe(LlamaCppReadiness.ERROR, LlamaCppClientErrorKind.CONNECTION_FAILURE.value)
+
+        if response.status_code == 503:
+            return LlamaCppProbe(LlamaCppReadiness.LOADING)
+        if response.status_code in {401, 403}:
+            return LlamaCppProbe(LlamaCppReadiness.ERROR, LlamaCppClientErrorKind.AUTHENTICATION_FAILURE.value)
+        if response.is_error:
+            return LlamaCppProbe(LlamaCppReadiness.ERROR, LlamaCppClientErrorKind.PROVIDER_FAILURE.value)
+
+        expected_alias = self._slot_config.expected_model_alias
+        if expected_alias is None:
+            return LlamaCppProbe(LlamaCppReadiness.READY)
+        try:
+            model_info = await self.model_info()
+        except LlamaCppClientError as error:
+            return LlamaCppProbe(LlamaCppReadiness.ERROR, error.kind.value)
+        if expected_alias not in model_info.model_ids:
+            return LlamaCppProbe(LlamaCppReadiness.ERROR, LlamaCppClientErrorKind.MODEL_MISMATCH.value)
+        return LlamaCppProbe(LlamaCppReadiness.READY)
+
+    async def model_info(self) -> LlamaCppModelInfo:
+        response = await self._request("GET", "/v1/models")
+        payload = self._json_object(response)
+        entries = payload.get("data")
+        if not isinstance(entries, list):
+            raise LlamaCppClientError(LlamaCppClientErrorKind.UNEXPECTED_RESPONSE)
+        model_ids: list[str] = []
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+                raise LlamaCppClientError(LlamaCppClientErrorKind.UNEXPECTED_RESPONSE)
+            model_ids.append(entry["id"])
+        return LlamaCppModelInfo(model_ids=tuple(model_ids))
+
+    async def generate(self, request: LLMGenerationRequest) -> LLMGenerationResult:
+        response = await self._request("POST", "/v1/chat/completions", json=self._chat_payload(request, stream=False))
+        payload = self._json_object(response)
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            raise LlamaCppClientError(LlamaCppClientErrorKind.UNEXPECTED_RESPONSE)
+        choice = choices[0]
+        message = choice.get("message")
+        if not isinstance(message, dict) or not isinstance(message.get("content"), str):
+            raise LlamaCppClientError(LlamaCppClientErrorKind.UNEXPECTED_RESPONSE)
+        finish_reason = choice.get("finish_reason")
+        if finish_reason is not None and not isinstance(finish_reason, str):
+            raise LlamaCppClientError(LlamaCppClientErrorKind.UNEXPECTED_RESPONSE)
+        return LLMGenerationResult(
+            assistant_text=message["content"],
+            finish_reason=finish_reason,
+            usage=self._usage_from_payload(payload.get("usage")),
+            provider_metadata={"provider": "llama_cpp"},
+        )
+
+    async def count_input_tokens(self, request: LLMGenerationRequest) -> LLMTokenCountResult:
+        """Delegate full-chat tokenization to the configured provider; never estimate locally."""
+
+        payload = self._chat_payload(request, stream=False)
+        payload.pop("stream", None)
+        response = await self._request("POST", "/v1/chat/completions/tokenize", json=payload)
+        response_payload = self._json_object(response)
+        count = response_payload.get("count")
+        if not isinstance(count, int) or isinstance(count, bool):
+            tokens = response_payload.get("tokens")
+            if isinstance(tokens, list):
+                count = len(tokens)
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise LlamaCppClientError(LlamaCppClientErrorKind.UNEXPECTED_RESPONSE)
+        return LLMTokenCountResult(input_tokens=count, provider_metadata={"provider": "llama_cpp"})
+
+    async def stream_generate(self, request: LLMGenerationRequest) -> AsyncIterator[LLMStreamEvent]:
+        """Normalize SSE into typed events while leaving cancellation untouched for httpx to clean up."""
+
+        try:
+            async with self._http_client.stream(
+                "POST",
+                self._endpoint("/v1/chat/completions"),
+                headers=self._headers(),
+                json=self._chat_payload(request, stream=True),
+                timeout=self._timeout,
+            ) as response:
+                if response.status_code >= 400:
+                    yield LLMStreamEvent(
+                        kind=LLMStreamEventKind.ERROR,
+                        error_code=self._status_error_kind(response.status_code).value,
+                    )
+                    return
+                saw_completion = False
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    raw_data = line[5:].strip()
+                    if raw_data == "[DONE]":
+                        yield LLMStreamEvent(kind=LLMStreamEventKind.COMPLETED, provider_metadata={"provider": "llama_cpp"})
+                        return
+                    try:
+                        payload = json.loads(raw_data)
+                    except json.JSONDecodeError:
+                        yield LLMStreamEvent(
+                            kind=LLMStreamEventKind.ERROR,
+                            error_code=LlamaCppClientErrorKind.MALFORMED_STREAM.value,
+                        )
+                        return
+                    if not isinstance(payload, dict):
+                        yield LLMStreamEvent(
+                            kind=LLMStreamEventKind.ERROR,
+                            error_code=LlamaCppClientErrorKind.MALFORMED_STREAM.value,
+                        )
+                        return
+                    if "error" in payload:
+                        yield LLMStreamEvent(
+                            kind=LLMStreamEventKind.ERROR,
+                            error_code=LlamaCppClientErrorKind.PROVIDER_FAILURE.value,
+                        )
+                        return
+                    usage = self._usage_from_payload(payload.get("usage"))
+                    if usage is not None:
+                        yield LLMStreamEvent(
+                            kind=LLMStreamEventKind.USAGE,
+                            usage=usage,
+                            provider_metadata={"provider": "llama_cpp"},
+                        )
+                    choices = payload.get("choices")
+                    if not isinstance(choices, list) or not choices:
+                        continue
+                    choice = choices[0]
+                    if not isinstance(choice, dict):
+                        yield LLMStreamEvent(
+                            kind=LLMStreamEventKind.ERROR,
+                            error_code=LlamaCppClientErrorKind.MALFORMED_STREAM.value,
+                        )
+                        return
+                    delta = choice.get("delta")
+                    if isinstance(delta, dict):
+                        content = delta.get("content")
+                        if isinstance(content, str) and content:
+                            yield LLMStreamEvent(
+                                kind=LLMStreamEventKind.TEXT_DELTA,
+                                text=content,
+                                provider_metadata={"provider": "llama_cpp"},
+                            )
+                        reasoning = delta.get("reasoning_content", delta.get("reasoning"))
+                        if isinstance(reasoning, str) and reasoning:
+                            yield LLMStreamEvent(
+                                kind=LLMStreamEventKind.REASONING_DELTA,
+                                text=reasoning,
+                                provider_metadata={"provider": "llama_cpp"},
+                            )
+                    if isinstance(choice.get("finish_reason"), str):
+                        saw_completion = True
+                        yield LLMStreamEvent(kind=LLMStreamEventKind.COMPLETED, provider_metadata={"provider": "llama_cpp"})
+                        return
+                if not saw_completion:
+                    yield LLMStreamEvent(
+                        kind=LLMStreamEventKind.ERROR,
+                        error_code=LlamaCppClientErrorKind.UNEXPECTED_STREAM_END.value,
+                    )
+        except httpx.TimeoutException:
+            yield LLMStreamEvent(kind=LLMStreamEventKind.ERROR, error_code=LlamaCppClientErrorKind.TIMEOUT.value)
+        except httpx.RequestError:
+            yield LLMStreamEvent(
+                kind=LLMStreamEventKind.ERROR,
+                error_code=LlamaCppClientErrorKind.CONNECTION_FAILURE.value,
+            )
+
+    async def _request(self, method: str, path: str, **kwargs: object) -> httpx.Response:
+        try:
+            response = await self._http_client.request(
+                method,
+                self._endpoint(path),
+                headers=self._headers(),
+                timeout=self._timeout,
+                **kwargs,
+            )
+        except httpx.TimeoutException as error:
+            raise LlamaCppClientError(LlamaCppClientErrorKind.TIMEOUT) from error
+        except httpx.RequestError as error:
+            raise LlamaCppClientError(LlamaCppClientErrorKind.CONNECTION_FAILURE) from error
+        if response.status_code in {401, 403}:
+            raise LlamaCppClientError(LlamaCppClientErrorKind.AUTHENTICATION_FAILURE)
+        if response.is_error:
+            raise LlamaCppClientError(LlamaCppClientErrorKind.PROVIDER_FAILURE)
+        return response
+
+    def _chat_payload(self, request: LLMGenerationRequest, *, stream: bool) -> dict[str, JsonValue]:
+        payload: dict[str, JsonValue] = {
+            "messages": [{"role": message.role.value, "content": message.content} for message in request.messages],
+            "stream": stream,
+        }
+        model = request.model_preference or self._slot_config.expected_model_alias
+        if model is not None:
+            payload["model"] = model
+        settings = request.generation
+        setting_values: Mapping[str, JsonValue] = {
+            "max_tokens": settings.max_output_tokens,
+            "temperature": settings.temperature,
+            "top_p": settings.top_p,
+            "top_k": settings.top_k,
+            "min_p": settings.min_p,
+            "repeat_penalty": settings.repeat_penalty,
+            "seed": settings.seed,
+        }
+        payload.update({key: value for key, value in setting_values.items() if value is not None})
+        if settings.stop:
+            payload["stop"] = list(settings.stop)
+        if request.reasoning.mode is not ReasoningMode.DEFAULT or request.reasoning.budget is not None:
+            reasoning: dict[str, JsonValue] = {"mode": request.reasoning.mode.value}
+            if request.reasoning.budget is not None:
+                reasoning["budget"] = request.reasoning.budget
+            payload["reasoning"] = reasoning
+        if request.structured_output is not None:
+            response_format: dict[str, JsonValue] = {
+                "type": "json_schema",
+                "json_schema": {"schema": dict(request.structured_output.json_schema)},
+            }
+            if request.structured_output.name is not None:
+                response_format["json_schema"]["name"] = request.structured_output.name  # type: ignore[index]
+            payload["response_format"] = response_format
+        return payload
+
+    def _endpoint(self, path: str) -> str:
+        return f"{self._slot_config.base_url}{path}"
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"Accept": "application/json"}
+        if self._api_key is not None:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        return headers
+
+    @staticmethod
+    def _json_object(response: httpx.Response) -> dict[str, object]:
+        try:
+            payload = response.json()
+        except (json.JSONDecodeError, ValueError) as error:
+            raise LlamaCppClientError(LlamaCppClientErrorKind.UNEXPECTED_RESPONSE) from error
+        if not isinstance(payload, dict):
+            raise LlamaCppClientError(LlamaCppClientErrorKind.UNEXPECTED_RESPONSE)
+        return payload
+
+    @staticmethod
+    def _usage_from_payload(payload: object) -> LLMUsage | None:
+        if not isinstance(payload, dict):
+            return None
+        values: dict[str, int | None] = {}
+        for destination, source in (
+            ("input_tokens", "prompt_tokens"),
+            ("output_tokens", "completion_tokens"),
+            ("total_tokens", "total_tokens"),
+        ):
+            value = payload.get(source)
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+                return None
+            values[destination] = value
+        return LLMUsage(**values)
+
+    @staticmethod
+    def _status_error_kind(status_code: int) -> LlamaCppClientErrorKind:
+        if status_code in {401, 403}:
+            return LlamaCppClientErrorKind.AUTHENTICATION_FAILURE
+        if status_code >= 500:
+            return LlamaCppClientErrorKind.PROVIDER_FAILURE
+        return LlamaCppClientErrorKind.UNEXPECTED_RESPONSE

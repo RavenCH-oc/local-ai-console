@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0.0",
+  "slots": {
+    "main": {
+      "provider": "llama_cpp",
+      "base_url": "https://example-llama-runtime.invalid",
+      "api_key_env": "LOCAL_AI_CONSOLE_MAIN_LLM_API_KEY",
+      "expected_model_alias": "example_main_model",
+      "timeouts": {
+        "connect_seconds": 10,
+        "read_seconds": 300
+      }
+    }
+  }
+}

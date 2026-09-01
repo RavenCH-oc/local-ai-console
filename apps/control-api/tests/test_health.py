@@ -74,6 +74,19 @@ class SystemEndpointTests(unittest.TestCase):
             self.assertNotIn("not-exported", str(body))
             self.assertEqual(set(body["paths"]), {"config", "data", "prompts", "knowledge", "logs", "cache", "backups"})
 
+    def test_llm_status_is_safe_when_no_runtime_is_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            with self.create_client(Path(temporary_directory)) as client:
+                response = client.get("/api/llm/status")
+                probe_response = client.post("/api/llm/probe")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["main"]["state"], "unconfigured")
+            self.assertEqual(response.json()["utility"]["state"], "unavailable")
+            self.assertNotIn("base_url", str(response.json()))
+            self.assertEqual(probe_response.status_code, 200)
+            self.assertEqual(probe_response.json(), response.json())
+
     def test_invalid_runtime_configuration_fails_at_startup(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_path = Path(temporary_directory)
