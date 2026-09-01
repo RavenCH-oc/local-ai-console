@@ -1,0 +1,20 @@
+{
+  "contract_type": "generation_preset",
+  "schema_version": "1.0.0",
+  "id": "balanced",
+  "display_name": "Balanced",
+  "max_output_tokens": 2048,
+  "temperature": 0.7,
+  "top_p": 0.9,
+  "top_k": 40,
+  "min_p": 0.05,
+  "repeat_penalty": 1.05,
+  "seed": null,
+  "stop_strings": [],
+  "reasoning_defaults": {
+    "enabled": true,
+    "budget": null,
+    "extensions": {}
+  },
+  "extensions": {}
+}

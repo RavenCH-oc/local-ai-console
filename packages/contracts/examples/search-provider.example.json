@@ -1,0 +1,8 @@
+{
+  "contract_type": "search_provider",
+  "schema_version": "1.0.0",
+  "id": "example_search_provider",
+  "display_name": "Example Search Provider",
+  "capabilities": ["web_search"],
+  "extensions": {}
+}

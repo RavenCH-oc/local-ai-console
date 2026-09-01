@@ -1,0 +1,10 @@
+{
+  "contract_type": "task_routing",
+  "schema_version": "1.0.0",
+  "task_kind": "context_compression",
+  "target_preference": "auto",
+  "required_capabilities": ["supports_system_prompt"],
+  "model_profile_id": "example_main_model",
+  "metadata": {},
+  "extensions": {}
+}

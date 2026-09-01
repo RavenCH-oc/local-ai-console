@@ -1,0 +1,34 @@
+{
+  "contract_type": "model_profile",
+  "schema_version": "1.0.0",
+  "id": "example_main_model",
+  "display_name": "Example Main Model",
+  "backend": "llama_cpp",
+  "model_location": {
+    "kind": "external_reference",
+    "reference": "private_model_storage"
+  },
+  "startup": {
+    "context_size": 16384,
+    "gpu_placement": {
+      "strategy": "backend_default"
+    },
+    "parallelism": 1,
+    "extensions": {}
+  },
+  "generation_defaults": {
+    "generation_preset_id": "balanced",
+    "extensions": {}
+  },
+  "capabilities": {
+    "supports_thinking": true,
+    "supports_reasoning_budget": true,
+    "supports_system_prompt": true,
+    "supports_native_context_shift": false,
+    "supports_images": false,
+    "supports_tools": false,
+    "extensions": {}
+  },
+  "request_adapter": "generic_chat_completion",
+  "extensions": {}
+}

@@ -1,0 +1,36 @@
+{
+  "contract_type": "mode_profile",
+  "schema_version": "1.0.0",
+  "id": "personal",
+  "display_name": "Personal",
+  "mode_kind": "personal",
+  "preferred_model_profile_id": "example_main_model",
+  "generation_preset_id": "balanced",
+  "context_policy_id": "default_llm_compact",
+  "task_routing_preferences": [
+    {
+      "task_kind": "chat",
+      "target_preference": "auto",
+      "required_capabilities": ["supports_system_prompt"],
+      "metadata": {},
+      "extensions": {}
+    },
+    {
+      "task_kind": "prompt_generation",
+      "target_preference": "auto",
+      "required_capabilities": ["supports_system_prompt"],
+      "metadata": {},
+      "extensions": {}
+    },
+    {
+      "task_kind": "context_compression",
+      "target_preference": "auto",
+      "required_capabilities": ["supports_system_prompt"],
+      "metadata": {},
+      "extensions": {}
+    }
+  ],
+  "ui_module_id": "console_chat",
+  "capability_requirements": ["supports_system_prompt"],
+  "extensions": {}
+}

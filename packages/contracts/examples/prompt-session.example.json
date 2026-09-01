@@ -1,0 +1,9 @@
+{
+  "contract_type": "prompt_session",
+  "schema_version": "1.0.0",
+  "id": "example_prompt_session",
+  "project_id": "example_prompt_project",
+  "created_at": "2025-01-01T00:00:00Z",
+  "updated_at": "2025-01-01T00:00:00Z",
+  "extensions": {}
+}

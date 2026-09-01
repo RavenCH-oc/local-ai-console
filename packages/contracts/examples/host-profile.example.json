@@ -1,0 +1,19 @@
+{
+  "contract_type": "host_profile",
+  "schema_version": "1.0.0",
+  "id": "example_controller",
+  "display_name": "Example Controller",
+  "platform": "windows",
+  "role": "controller",
+  "runtime_slots": [
+    {
+      "slot": "main",
+      "availability": "available"
+    },
+    {
+      "slot": "utility",
+      "availability": "unavailable"
+    }
+  ],
+  "extensions": {}
+}

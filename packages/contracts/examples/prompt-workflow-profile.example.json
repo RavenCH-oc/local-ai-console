@@ -1,0 +1,15 @@
+{
+  "contract_type": "prompt_workflow_profile",
+  "schema_version": "1.0.0",
+  "id": "example_image_prompt_workflow",
+  "display_name": "Example Image Prompt Workflow",
+  "preferred_model_profile_id": "example_main_model",
+  "fallback_target_preference": "auto",
+  "supported_modes": ["stable", "balanced", "detailed", "preserve"],
+  "default_mode": "balanced",
+  "system_components": [],
+  "knowledge_source_references": [],
+  "example_source_references": [],
+  "capabilities": ["supports_system_prompt"],
+  "extensions": {}
+}

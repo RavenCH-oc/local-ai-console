@@ -1,0 +1,735 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-ai-console.invalid/contracts/v1/local-ai-console-contracts.schema.json",
+  "title": "Local AI Console shared architecture contracts",
+  "description": "Canonical language-neutral contracts for Local AI Console.",
+  "oneOf": [
+    { "$ref": "#/$defs/modelProfile" },
+    { "$ref": "#/$defs/generationPreset" },
+    { "$ref": "#/$defs/contextPolicy" },
+    { "$ref": "#/$defs/modeProfile" },
+    { "$ref": "#/$defs/promptWorkflowProfile" },
+    { "$ref": "#/$defs/promptProject" },
+    { "$ref": "#/$defs/promptSession" },
+    { "$ref": "#/$defs/promptProjectState" },
+    { "$ref": "#/$defs/promptRevision" },
+    { "$ref": "#/$defs/promptResponse" },
+    { "$ref": "#/$defs/taskContext" },
+    { "$ref": "#/$defs/taskRouting" },
+    { "$ref": "#/$defs/searchProvider" },
+    { "$ref": "#/$defs/searchRequest" },
+    { "$ref": "#/$defs/searchResponse" },
+    { "$ref": "#/$defs/hostProfile" }
+  ],
+  "$defs": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*\\.[0-9]+\\.[0-9]+$"
+    },
+    "stableId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "runtimeSlot": {
+      "type": "string",
+      "enum": ["main", "utility"]
+    },
+    "runtimeTargetPreference": {
+      "type": "string",
+      "enum": ["auto", "main", "utility"]
+    },
+    "runtimeSlotAvailability": {
+      "type": "string",
+      "enum": ["available", "unavailable"]
+    },
+    "taskKind": {
+      "type": "string",
+      "enum": ["chat", "prompt_generation", "context_compression"]
+    },
+    "contextMode": {
+      "type": "string",
+      "enum": ["native_shift", "manual", "llm_compact"]
+    },
+    "promptWorkflowMode": {
+      "type": "string",
+      "enum": ["stable", "balanced", "detailed", "preserve"]
+    },
+    "promptResponseKind": {
+      "type": "string",
+      "enum": ["discussion", "revision", "clarification"]
+    },
+    "searchMode": {
+      "type": "string",
+      "enum": ["off", "manual", "auto"]
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["windows", "linux"]
+    },
+    "modelLocation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "path"],
+          "properties": {
+            "kind": { "const": "external_path" },
+            "path": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "reference"],
+          "properties": {
+            "kind": { "const": "external_reference" },
+            "reference": { "$ref": "#/$defs/stableId" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "modelStartup": {
+      "type": "object",
+      "required": ["context_size"],
+      "properties": {
+        "context_size": { "type": "integer", "minimum": 1 },
+        "gpu_placement": { "$ref": "#/$defs/extensions" },
+        "kv_cache": { "$ref": "#/$defs/extensions" },
+        "batch_size": { "type": "integer", "minimum": 1 },
+        "flash_attention": { "type": "boolean" },
+        "parallelism": { "type": "integer", "minimum": 1 },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "modelCapabilities": {
+      "type": "object",
+      "required": [
+        "supports_thinking",
+        "supports_reasoning_budget",
+        "supports_system_prompt",
+        "supports_native_context_shift",
+        "supports_images",
+        "supports_tools"
+      ],
+      "properties": {
+        "supports_thinking": { "type": "boolean" },
+        "supports_reasoning_budget": { "type": "boolean" },
+        "supports_system_prompt": { "type": "boolean" },
+        "supports_native_context_shift": { "type": "boolean" },
+        "supports_images": { "type": "boolean" },
+        "supports_tools": { "type": "boolean" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "generationDefaults": {
+      "type": "object",
+      "required": ["generation_preset_id"],
+      "properties": {
+        "generation_preset_id": { "$ref": "#/$defs/stableId" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "reasoningDefaults": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "budget": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "modelProfile": {
+      "type": "object",
+      "required": [
+        "contract_type",
+        "schema_version",
+        "id",
+        "display_name",
+        "backend",
+        "model_location",
+        "startup",
+        "generation_defaults",
+        "capabilities",
+        "extensions"
+      ],
+      "properties": {
+        "contract_type": { "const": "model_profile" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "id": { "$ref": "#/$defs/stableId" },
+        "display_name": { "$ref": "#/$defs/displayName" },
+        "backend": { "$ref": "#/$defs/stableId" },
+        "model_location": { "$ref": "#/$defs/modelLocation" },
+        "startup": { "$ref": "#/$defs/modelStartup" },
+        "generation_defaults": { "$ref": "#/$defs/generationDefaults" },
+        "capabilities": { "$ref": "#/$defs/modelCapabilities" },
+        "request_adapter": {
+          "anyOf": [
+            { "$ref": "#/$defs/stableId" },
+            { "type": "null" }
+          ]
+        },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "generationPreset": {
+      "type": "object",
+      "required": [
+        "contract_type",
+        "schema_version",
+        "id",
+        "display_name",
+        "max_output_tokens",
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "repeat_penalty",
+        "seed",
+        "reasoning_defaults",
+        "extensions"
+      ],
+      "properties": {
+        "contract_type": { "const": "generation_preset" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "id": { "$ref": "#/$defs/stableId" },
+        "display_name": { "$ref": "#/$defs/displayName" },
+        "max_output_tokens": { "type": "integer", "minimum": 1 },
+        "temperature": { "type": "number", "minimum": 0 },
+        "top_p": { "type": "number", "minimum": 0, "maximum": 1 },
+        "top_k": { "type": "integer", "minimum": 0 },
+        "min_p": { "type": "number", "minimum": 0, "maximum": 1 },
+        "repeat_penalty": { "type": "number", "exclusiveMinimum": 0 },
+        "seed": { "type": ["integer", "null"] },
+        "stop_strings": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "reasoning_defaults": { "$ref": "#/$defs/reasoningDefaults" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "contextTokenTarget": {
+      "type": "object",
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "const": "token_budget" },
+        "value": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "contextPolicy": {
+      "type": "object",
+      "required": [
+        "contract_type",
+        "schema_version",
+        "id",
+        "display_name",
+        "mode",
+        "notice_threshold",
+        "urgent_threshold",
+        "safety_threshold",
+        "confirmation_required",
+        "recent_raw_keep_target",
+        "summary_target",
+        "compression_task_target",
+        "extensions"
+      ],
+      "properties": {
+        "contract_type": { "const": "context_policy" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "id": { "$ref": "#/$defs/stableId" },
+        "display_name": { "$ref": "#/$defs/displayName" },
+        "mode": { "$ref": "#/$defs/contextMode" },
+        "notice_threshold": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "urgent_threshold": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "safety_threshold": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "confirmation_required": { "type": "boolean" },
+        "recent_raw_keep_target": { "$ref": "#/$defs/contextTokenTarget" },
+        "summary_target": { "$ref": "#/$defs/contextTokenTarget" },
+        "compression_task_target": { "$ref": "#/$defs/runtimeTargetPreference" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "mode": { "const": "llm_compact" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": { "confirmation_required": { "const": true } }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "taskRoutingPreference": {
+      "type": "object",
+      "required": ["task_kind", "target_preference", "required_capabilities", "metadata", "extensions"],
+      "properties": {
+        "task_kind": { "$ref": "#/$defs/taskKind" },
+        "target_preference": { "$ref": "#/$defs/runtimeTargetPreference" },
+        "required_capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/stableId" },
+          "uniqueItems": true
+        },
+        "model_profile_id": { "$ref": "#/$defs/stableId" },
+        "metadata": { "$ref": "#/$defs/extensions" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "taskContext": {
+      "type": "object",
+      "required": [
+        "contract_type",
+        "schema_version",
+        "task_kind",
+        "target_preference",
+        "required_capabilities",
+        "metadata",
+        "extensions"
+      ],
+      "properties": {
+        "contract_type": { "const": "task_context" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "task_kind": { "$ref": "#/$defs/taskKind" },
+        "target_preference": { "$ref": "#/$defs/runtimeTargetPreference" },
+        "required_capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/stableId" },
+          "uniqueItems": true
+        },
+        "model_profile_id": { "$ref": "#/$defs/stableId" },
+        "metadata": { "$ref": "#/$defs/extensions" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "taskRouting": {
+      "type": "object",
+      "required": [
+        "contract_type",
+        "schema_version",
+        "task_kind",
+        "target_preference",
+        "required_capabilities",
+        "metadata",
+        "extensions"
+      ],
+      "properties": {
+        "contract_type": { "const": "task_routing" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "task_kind": { "$ref": "#/$defs/taskKind" },
+        "target_preference": { "$ref": "#/$defs/runtimeTargetPreference" },
+        "required_capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/stableId" },
+          "uniqueItems": true
+        },
+        "model_profile_id": { "$ref": "#/$defs/stableId" },
+        "metadata": { "$ref": "#/$defs/extensions" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "modeProfile": {
+      "type": "object",
+      "required": [
+        "contract_type",
+        "schema_version",
+        "id",
+        "display_name",
+        "mode_kind",
+        "preferred_model_profile_id",
+        "generation_preset_id",
+        "context_policy_id",
+        "task_routing_preferences",
+        "ui_module_id",
+        "capability_requirements",
+        "extensions"
+      ],
+      "properties": {
+        "contract_type": { "const": "mode_profile" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "id": { "$ref": "#/$defs/stableId" },
+        "display_name": { "$ref": "#/$defs/displayName" },
+        "mode_kind": { "$ref": "#/$defs/stableId" },
+        "preferred_model_profile_id": { "$ref": "#/$defs/stableId" },
+        "generation_preset_id": { "$ref": "#/$defs/stableId" },
+        "context_policy_id": { "$ref": "#/$defs/stableId" },
+        "task_routing_preferences": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/taskRoutingPreference" }
+        },
+        "ui_module_id": { "$ref": "#/$defs/stableId" },
+        "capability_requirements": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/stableId" },
+          "uniqueItems": true
+        },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "workflowSystemComponent": {
+      "type": "object",
+      "required": ["id", "kind", "reference"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stableId" },
+        "kind": { "$ref": "#/$defs/stableId" },
+        "reference": { "$ref": "#/$defs/stableId" }
+      },
+      "additionalProperties": false
+    },
+    "promptWorkflowProfile": {
+      "type": "object",
+      "required": [
+        "contract_type",
+        "schema_version",
+        "id",
+        "display_name",
+        "preferred_model_profile_id",
+        "fallback_target_preference",
+        "supported_modes",
+        "default_mode",
+        "system_components",
+        "knowledge_source_references",
+        "example_source_references",
+        "capabilities",
+        "extensions"
+      ],
+      "properties": {
+        "contract_type": { "const": "prompt_workflow_profile" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "id": { "$ref": "#/$defs/stableId" },
+        "display_name": { "$ref": "#/$defs/displayName" },
+        "preferred_model_profile_id": { "$ref": "#/$defs/stableId" },
+        "fallback_target_preference": { "$ref": "#/$defs/runtimeTargetPreference" },
+        "supported_modes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/promptWorkflowMode" },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "default_mode": { "$ref": "#/$defs/promptWorkflowMode" },
+        "system_components": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workflowSystemComponent" }
+        },
+        "knowledge_source_references": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/stableId" },
+          "uniqueItems": true
+        },
+        "example_source_references": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/stableId" },
+          "uniqueItems": true
+        },
+        "output_contract_ref": { "$ref": "#/$defs/stableId" },
+        "parameter_schema_ref": { "$ref": "#/$defs/stableId" },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/stableId" },
+          "uniqueItems": true
+        },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "promptProject": {
+      "type": "object",
+      "required": [
+        "contract_type",
+        "schema_version",
+        "id",
+        "title",
+        "workflow_profile_id",
+        "created_at",
+        "updated_at",
+        "active_session_id",
+        "current_revision_id",
+        "extensions"
+      ],
+      "properties": {
+        "contract_type": { "const": "prompt_project" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "id": { "$ref": "#/$defs/stableId" },
+        "title": { "$ref": "#/$defs/displayName" },
+        "workflow_profile_id": { "$ref": "#/$defs/stableId" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" },
+        "active_session_id": { "$ref": "#/$defs/stableId" },
+        "current_revision_id": { "$ref": "#/$defs/stableId" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "promptSession": {
+      "type": "object",
+      "required": [
+        "contract_type",
+        "schema_version",
+        "id",
+        "project_id",
+        "created_at",
+        "updated_at",
+        "extensions"
+      ],
+      "properties": {
+        "contract_type": { "const": "prompt_session" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "id": { "$ref": "#/$defs/stableId" },
+        "project_id": { "$ref": "#/$defs/stableId" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "promptProjectState": {
+      "type": "object",
+      "required": [
+        "contract_type",
+        "schema_version",
+        "id",
+        "project_id",
+        "objective",
+        "important_constraints",
+        "must_preserve",
+        "known_problems",
+        "accepted_observations",
+        "current_revision_id",
+        "extensions"
+      ],
+      "properties": {
+        "contract_type": { "const": "prompt_project_state" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "id": { "$ref": "#/$defs/stableId" },
+        "project_id": { "$ref": "#/$defs/stableId" },
+        "objective": { "type": "string", "minLength": 1 },
+        "important_constraints": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "must_preserve": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "known_problems": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "accepted_observations": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "current_revision_id": { "$ref": "#/$defs/stableId" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "promptRevision": {
+      "type": "object",
+      "required": [
+        "contract_type",
+        "schema_version",
+        "id",
+        "project_id",
+        "parent_revision_id",
+        "positive",
+        "negative",
+        "parameters",
+        "change_log",
+        "created_at",
+        "extensions"
+      ],
+      "properties": {
+        "contract_type": { "const": "prompt_revision" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "id": { "$ref": "#/$defs/stableId" },
+        "project_id": { "$ref": "#/$defs/stableId" },
+        "parent_revision_id": {
+          "anyOf": [
+            { "$ref": "#/$defs/stableId" },
+            { "type": "null" }
+          ]
+        },
+        "positive": { "type": "string" },
+        "negative": { "type": "string" },
+        "parameters": { "$ref": "#/$defs/extensions" },
+        "change_log": { "type": "string", "minLength": 1 },
+        "created_at": { "type": "string", "format": "date-time" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "promptResponse": {
+      "type": "object",
+      "required": [
+        "contract_type",
+        "schema_version",
+        "project_id",
+        "session_id",
+        "response_kind",
+        "content",
+        "extensions"
+      ],
+      "properties": {
+        "contract_type": { "const": "prompt_response" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "project_id": { "$ref": "#/$defs/stableId" },
+        "session_id": { "$ref": "#/$defs/stableId" },
+        "response_kind": { "$ref": "#/$defs/promptResponseKind" },
+        "content": { "type": "string" },
+        "revision_id": { "$ref": "#/$defs/stableId" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "response_kind": { "const": "revision" } },
+            "required": ["response_kind"]
+          },
+          "then": { "required": ["revision_id"] }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "searchProvider": {
+      "type": "object",
+      "required": ["contract_type", "schema_version", "id", "display_name", "capabilities", "extensions"],
+      "properties": {
+        "contract_type": { "const": "search_provider" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "id": { "$ref": "#/$defs/stableId" },
+        "display_name": { "$ref": "#/$defs/displayName" },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/stableId" },
+          "uniqueItems": true
+        },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "searchRequest": {
+      "type": "object",
+      "required": ["contract_type", "schema_version", "query", "options", "extensions"],
+      "properties": {
+        "contract_type": { "const": "search_request" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "query": { "type": "string", "minLength": 1 },
+        "options": { "$ref": "#/$defs/extensions" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "searchSource": {
+      "type": "object",
+      "required": ["id", "title", "url"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stableId" },
+        "title": { "$ref": "#/$defs/displayName" },
+        "url": { "type": "string", "format": "uri" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "citation": {
+      "type": "object",
+      "required": ["source_id"],
+      "properties": {
+        "source_id": { "$ref": "#/$defs/stableId" },
+        "label": { "type": "string" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "searchResponse": {
+      "type": "object",
+      "required": [
+        "contract_type",
+        "schema_version",
+        "provider_id",
+        "answer",
+        "sources",
+        "citations",
+        "provider_metadata",
+        "extensions"
+      ],
+      "properties": {
+        "contract_type": { "const": "search_response" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "provider_id": { "$ref": "#/$defs/stableId" },
+        "answer": { "type": ["string", "null"] },
+        "sources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/searchSource" }
+        },
+        "citations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/citation" }
+        },
+        "provider_metadata": { "$ref": "#/$defs/extensions" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "runtimeSlotState": {
+      "type": "object",
+      "required": ["slot", "availability"],
+      "properties": {
+        "slot": { "$ref": "#/$defs/runtimeSlot" },
+        "availability": { "$ref": "#/$defs/runtimeSlotAvailability" }
+      },
+      "additionalProperties": false
+    },
+    "hostProfile": {
+      "type": "object",
+      "required": [
+        "contract_type",
+        "schema_version",
+        "id",
+        "display_name",
+        "platform",
+        "role",
+        "runtime_slots",
+        "extensions"
+      ],
+      "properties": {
+        "contract_type": { "const": "host_profile" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "id": { "$ref": "#/$defs/stableId" },
+        "display_name": { "$ref": "#/$defs/displayName" },
+        "platform": { "$ref": "#/$defs/platform" },
+        "role": { "$ref": "#/$defs/stableId" },
+        "runtime_slots": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/runtimeSlotState" },
+          "uniqueItems": true
+        },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

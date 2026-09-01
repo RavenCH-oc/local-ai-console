@@ -1,0 +1,21 @@
+{
+  "contract_type": "context_policy",
+  "schema_version": "1.0.0",
+  "id": "default_llm_compact",
+  "display_name": "Default LLM Compact",
+  "mode": "llm_compact",
+  "notice_threshold": 0.75,
+  "urgent_threshold": 0.85,
+  "safety_threshold": 0.92,
+  "confirmation_required": true,
+  "recent_raw_keep_target": {
+    "kind": "token_budget",
+    "value": 4096
+  },
+  "summary_target": {
+    "kind": "token_budget",
+    "value": 2048
+  },
+  "compression_task_target": "auto",
+  "extensions": {}
+}

@@ -1,0 +1,12 @@
+{
+  "contract_type": "prompt_project",
+  "schema_version": "1.0.0",
+  "id": "example_prompt_project",
+  "title": "Example Image Prompt Project",
+  "workflow_profile_id": "example_image_prompt_workflow",
+  "created_at": "2025-01-01T00:00:00Z",
+  "updated_at": "2025-01-01T00:00:00Z",
+  "active_session_id": "example_prompt_session",
+  "current_revision_id": "example_prompt_revision_1",
+  "extensions": {}
+}

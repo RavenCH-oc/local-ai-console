@@ -1,0 +1,13 @@
+{
+  "contract_type": "prompt_revision",
+  "schema_version": "1.0.0",
+  "id": "example_prompt_revision_1",
+  "project_id": "example_prompt_project",
+  "parent_revision_id": null,
+  "positive": "generic subject, clear composition",
+  "negative": "unwanted artifacts",
+  "parameters": {},
+  "change_log": "Initial sanitized example revision.",
+  "created_at": "2025-01-01T00:00:00Z",
+  "extensions": {}
+}

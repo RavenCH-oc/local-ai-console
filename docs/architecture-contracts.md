@@ -1,0 +1,99 @@
+# Shared architecture contracts
+
+## Purpose
+
+Phase 0C freezes the first language-neutral contract layer for Local AI Console. These contracts describe configuration and domain data shared by future controller, web, node, workflow, context, and search components. They do not implement any application behavior.
+
+The canonical serialized representation is JSON Schema Draft 2020-12 in `packages/contracts/schemas/local-ai-console-contracts.schema.json`. Sanitized examples live beside it in `packages/contracts/examples/`.
+
+## Identity, versioning, and references
+
+Named domain objects use stable machine IDs such as `example_main_model`, `personal`, and `example_image_prompt_workflow`. Display names are for presentation only. Persisted or configurable contracts include `schema_version`; the initial version is `1.0.0`.
+
+Cross-contract links use explicit ID fields such as `preferred_model_profile_id`, `generation_preset_id`, `context_policy_id`, and `workflow_profile_id`. Contracts do not copy whole referenced objects, use a display name as an identity, or use a filesystem path as an identity.
+
+`extensions` and `metadata` are bounded locations for backend- or provider-specific data. They do not replace the documented core fields.
+
+## Distinctions that remain separate
+
+| Distinction | Contract meaning |
+| --- | --- |
+| Model != Mode | A ModelProfile describes a model configuration; a ModeProfile describes a product experience that selects preferences. |
+| Mode != Task | A mode is a first-class user-facing profile; a task is a unit of requested work. |
+| Task != Runtime Slot | A task declares kind and preference; a runtime slot is an actual execution capacity. |
+| Runtime Target `auto` != Runtime Slot | `auto` is routing preference only, never a slot. Slots are `main` and `utility`. |
+| GenerationPreset != Model startup config | Presets contain per-request defaults; startup settings are load-time/runtime settings in ModelProfile. |
+| Prompt Project != Chat | A project is a long-lived prompt-work item with structured state; a chat is not its replacement. |
+| Prompt Revision != LLM message | Revisions are versioned prompt artifacts; discussion can occur without producing one. |
+| SearchProvider != LLM runtime | Search is an independent provider abstraction, not an LLM runtime slot. |
+
+## Runtime slots and tasks
+
+`RuntimeSlot` is exactly `main` or `utility`. `RuntimeTargetPreference` is `auto`, `main`, or `utility`; `auto` does not represent an installed runtime.
+
+The currently documented deployment assumption is an Ubuntu LLM node with 2 × RTX 2080 Ti, one available `main` slot, and an unavailable `utility` slot. In that deployment, the following initial task preferences resolve to `main`:
+
+```text
+chat                -> main
+prompt_generation   -> main
+context_compression -> main
+```
+
+This is a current deployment example, not a permanent contract constraint. A future independent Utility LLM can make the `utility` slot available without changing TaskContext, TaskRouting, ModeProfile, or ContextPolicy shapes.
+
+TaskKind is intentionally limited to `chat`, `prompt_generation`, and `context_compression`. TaskContext and TaskRouting can express task kind, target preference, required capabilities, optional model-profile preference, and bounded metadata/extensions. No runtime router is implemented in this phase.
+
+## Model and generation contracts
+
+ModelProfile represents a model configuration, not a hard-coded model file. It has a backend identifier, an external model-location concept, startup settings, a default GenerationPreset reference, capability flags, and an optional request-adapter identifier. `llama_cpp` is the first known backend identifier, but the backend field is extensible.
+
+Model locations can be an external path in private runtime configuration or an opaque external reference. They are never public repository identities, and public examples use only an opaque reference.
+
+Startup settings include load-time concerns such as context size, GPU placement, KV cache, batch size, flash attention, and parallelism. GenerationPreset contains per-request defaults only: output limit, sampling values, seed, stop strings, and reasoning defaults. A preset must not contain model paths, GPU placement, context size, or KV settings.
+
+The initial capability flags are `supports_thinking`, `supports_reasoning_budget`, `supports_system_prompt`, `supports_native_context_shift`, `supports_images`, and `supports_tools`. Backend-specific request behavior belongs behind `request_adapter` or `extensions`, not scattered through generic contracts.
+
+## Context policy
+
+ContextMode is `native_shift`, `manual`, or `llm_compact`. `native_shift` delegates to a model backend's supported context-shift behavior; `manual` makes compaction a user-directed action. The initial `llm_compact` meaning is user notification plus confirmation, followed by compression using the same available `main` model. Its compression task target is `auto`, which currently resolves to `main` because Utility is unavailable.
+
+ContextPolicy keeps editable thresholds, confirmation requirement, recent raw-context target, summary target, and compression target. The sanitized default example uses approximately 75%, 85%, and 92% for notice, urgent, and safety thresholds. They are values, not immutable constants.
+
+Future occupancy calculation must consider active prompt tokens, reserved output tokens, and reserved reasoning tokens; it is not merely `prompt_tokens / context_size`. The Context Engine implementation is out of scope.
+
+## Modes and Prompt Workbench
+
+ModeProfile is extensible through `mode_kind`; current reserved IDs include `personal`, `discord_bot`, `waifu_bot`, and `prompt_workbench`. A ModeProfile selects model, generation, context, task preferences, UI/module identity, and required capabilities. It contains no Discord or Waifu business logic.
+
+PromptWorkflowProfile defines generic Prompt Workbench behavior. It does not hard-code a particular workflow. It can select a preferred model, fallback target preference, supported workflow modes, system-component references, knowledge/example source references, optional output/parameter schema references, and extensions.
+
+Prompt workflow modes are semantic values:
+
+- `stable`: prioritize anatomy, pose stability, and fewer high-information elements.
+- `balanced`: default trade-off between stability and useful detail.
+- `detailed`: increase useful material, atmosphere, lighting, camera, or visual detail without merely making a prompt longer.
+- `preserve`: modify requested dimensions while retaining unrelated accepted attributes.
+
+## Prompt project and response semantics
+
+PromptProject is a durable long-running prompt-work item and references its workflow, active session, and current revision. PromptSession represents the discussion session without defining a message database. PromptProjectState carries objective, constraints, preservation requirements, known problems, accepted observations, and a current revision reference so compression does not discard essential state.
+
+PromptRevision is immutable versioned prompt content with a project reference, optional parent revision, positive/negative fields, parameters, change log, and timestamp. It supports future comparison, restore, branching, and acceptance without overwriting a prompt on every turn.
+
+PromptResponse distinguishes `discussion`, `revision`, and `clarification`. Discussion and clarification may have no revision. A response with kind `revision` must reference a PromptRevision. No Prompt Generator or persistence behavior is implemented here.
+
+## Search contract
+
+SearchMode is `off`, `manual`, or `auto`: `off` performs no search, `manual` requires explicit user invocation, and `auto` permits a future orchestrator to decide. SearchProvider is generic and leaves provider-specific behavior in extensions. SearchRequest carries a query and optional options. SearchResponse carries a provider ID, optional synthesized answer, stable-ID sources, citations pointing to source IDs, and provider metadata. This leaves room for a future grounded-search provider without making a provider-specific class the only abstraction.
+
+No search UI, credential, API key, network request, or provider integration exists in Phase 0C.
+
+## Host contract and public/private boundary
+
+HostProfile contains only stable identity, display name, platform (`windows` or `linux`), role, runtime-slot availability, and extensions. It deliberately excludes URL, IP address, MAC address, hostname, Wake-on-LAN data, model paths, and credentials.
+
+The Repository remains public source only. Runtime/private data stays outside it according to [Runtime data boundary](runtime-data-boundary.md). Public examples must remain sanitized: no real host information, user paths, model files, API keys, bot credentials, system prompts, conversations, or private QA/knowledge. Public workflow reference data belongs under source paths such as `packages/prompt-engine/`, never the repository-root `knowledge/` runtime directory.
+
+## Deferred work
+
+Later phases will derive language-specific adapters/types, implement runtime-path resolution, persistence, routing, Context Engine behavior, model runtime control, and integrations. This phase deliberately does none of those things.

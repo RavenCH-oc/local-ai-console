@@ -20,3 +20,8 @@ jobs:
         shell: bash
         run: |
           python3 scripts/check-repository-hygiene.py
+
+      - name: Validate shared architecture contracts
+        shell: bash
+        run: |
+          python3 scripts/validate-contracts.py

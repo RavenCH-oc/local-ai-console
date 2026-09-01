@@ -1,0 +1,13 @@
+{
+  "contract_type": "prompt_project_state",
+  "schema_version": "1.0.0",
+  "id": "example_prompt_project_state",
+  "project_id": "example_prompt_project",
+  "objective": "Create a concise generic image-generation prompt.",
+  "important_constraints": ["Keep the example free of private subject details."],
+  "must_preserve": ["Clear subject and composition."],
+  "known_problems": [],
+  "accepted_observations": [],
+  "current_revision_id": "example_prompt_revision_1",
+  "extensions": {}
+}
