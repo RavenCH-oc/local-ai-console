@@ -51,3 +51,33 @@ jobs:
         shell: bash
         run: |
           python -m unittest discover -s apps/node-agent/tests -v
+
+  web:
+    name: Verify web foundation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Test web application
+        working-directory: apps/web
+        run: npm test
+
+      - name: Type-check web application
+        working-directory: apps/web
+        run: npm run typecheck
+
+      - name: Build web application
+        working-directory: apps/web
+        run: npm run build
