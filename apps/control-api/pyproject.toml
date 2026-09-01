@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-ai-console-control-api"
+dynamic = ["version"]
+description = "Local AI Console Windows Controller API foundation"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<1.0",
+  "uvicorn[standard]>=0.30,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27,<1.0",
+]
+
+[project.scripts]
+local-ai-console-control-api = "local_ai_console_control.main:run"
+
+[tool.setuptools.dynamic]
+version = { attr = "local_ai_console_control.version.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

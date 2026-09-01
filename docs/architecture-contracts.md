@@ -96,4 +96,4 @@ The Repository remains public source only. Runtime/private data stays outside it
 
 ## Deferred work
 
-Later phases will derive language-specific adapters/types, implement runtime-path resolution, persistence, routing, Context Engine behavior, model runtime control, and integrations. This phase deliberately does none of those things.
+Later phases will derive language-specific adapters/types and implement persistence, routing, Context Engine behavior, model runtime control, and integrations. The Phase 0D Control API implements the separate Controller Runtime path resolver; this phase deliberately implements none of those runtime behaviors.

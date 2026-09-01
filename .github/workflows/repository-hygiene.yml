@@ -16,12 +16,28 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Enforce public/private runtime boundary
         shell: bash
         run: |
-          python3 scripts/check-repository-hygiene.py
+          python scripts/check-repository-hygiene.py
 
       - name: Validate shared architecture contracts
         shell: bash
         run: |
-          python3 scripts/validate-contracts.py
+          python scripts/validate-contracts.py
+
+      - name: Install Control API test dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e "apps/control-api[dev]"
+
+      - name: Test Control API
+        shell: bash
+        run: |
+          python -m unittest discover -s apps/control-api/tests -v

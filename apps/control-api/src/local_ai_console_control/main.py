@@ -1,0 +1,56 @@
+"""FastAPI application entry point for the Windows Controller."""
+
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Mapping
+
+import uvicorn
+from fastapi import FastAPI
+
+from local_ai_console_control.api.system import APPLICATION_NAME, SERVICE_ROLE, router as system_router
+from local_ai_console_control.config.runtime_paths import (
+    find_repository_root,
+    initialize_runtime_layout,
+    resolve_runtime_paths,
+)
+from local_ai_console_control.version import __version__
+
+
+def create_app(
+    *,
+    repository_root: Path | str | None = None,
+    environ: Mapping[str, str] | None = None,
+    platform_name: str | None = None,
+    local_appdata: Path | str | None = None,
+) -> FastAPI:
+    """Create the API; runtime directories are initialized during startup only."""
+
+    resolved_repository_root = Path(repository_root) if repository_root is not None else find_repository_root()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        runtime_paths = resolve_runtime_paths(
+            repository_root=resolved_repository_root,
+            environ=environ,
+            platform_name=platform_name,
+            local_appdata=local_appdata,
+        )
+        initialize_runtime_layout(runtime_paths)
+        app.state.runtime_paths = runtime_paths
+        yield
+
+    app = FastAPI(title=APPLICATION_NAME, version=__version__, lifespan=lifespan)
+    app.include_router(system_router)
+    app.state.service_role = SERVICE_ROLE
+    return app
+
+
+app = create_app()
+
+
+def run() -> None:
+    """Run the local development server through the installed console script."""
+
+    uvicorn.run(app, host="127.0.0.1", port=8000)

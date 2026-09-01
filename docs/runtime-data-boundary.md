@@ -16,7 +16,7 @@ The Repository is never the default location for Private Runtime Data. `.gitigno
 
 The Controller Runtime root must not resolve inside the source Repository. A future runtime resolver must resolve the configured path and reject it when it is the Repository itself or any of its descendants. This rule must be based on resolved paths, not a hard-coded repository location or a string-prefix comparison.
 
-This phase defines the invariant and repository hygiene checks only. It does not create a runtime resolver, directories, or private data. The reusable runtime-path implementation belongs to a later phase.
+Phase 0D implements this invariant in the Control API runtime-path resolver and creates the empty layout only after a root resolves safely outside the Repository. It does not create private content, configuration, secrets, prompts, or databases.
 
 ## Windows Controller Runtime
 
