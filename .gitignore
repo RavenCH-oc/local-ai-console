@@ -45,6 +45,7 @@ Desktop.ini
 *.sqlite
 *.sqlite-*
 *.sqlite3
+*.sqlite3-*
 
 # Logs, caches, backups, and temporary local output.
 /logs/
@@ -64,6 +65,7 @@ Desktop.ini
 /runtime-data/
 /local-data/
 /data/
+/knowledge/
 /state/
 /storage/
 /generated/

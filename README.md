@@ -6,11 +6,13 @@ The planned architecture pairs a Windows 11 controller with a Linux/Ubuntu LLM n
 
 ## Development status
 
-This repository currently contains only the public-safe project baseline. No application, API, node agent, model runtime, or workflow feature is available yet.
+This repository currently contains a public-safe project baseline and runtime-data boundary contract. No application, API, node agent, model runtime, or workflow feature is available yet.
 
 ## Public repository boundary
 
 This repository contains code and sanitized templates only. Do not commit runtime data, credentials, chat history, private prompts, host information, actual model paths, generated artifacts, or model files. Use local ignored files for private configuration when later development phases introduce runtime paths.
+
+See [Runtime data boundary](docs/runtime-data-boundary.md) for the Controller Runtime and Node Runtime contract.
 
 ## License
 
