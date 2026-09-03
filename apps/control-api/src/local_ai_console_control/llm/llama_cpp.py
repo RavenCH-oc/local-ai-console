@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 import json
 import math
@@ -15,6 +16,7 @@ from local_ai_console_control.llm.types import (
     JsonValue,
     LLMGenerationRequest,
     LLMGenerationResult,
+    LLMRuntimeCapabilities,
     LLMStreamEvent,
     LLMStreamEventKind,
     LLMTokenCountResult,
@@ -34,12 +36,20 @@ class LlamaCppClientErrorKind(StrEnum):
     MODEL_MISMATCH = "model_mismatch"
     MALFORMED_STREAM = "malformed_stream"
     UNEXPECTED_STREAM_END = "unexpected_stream_end"
+    UNSUPPORTED_CAPABILITY = "unsupported_capability"
 
 
 class LlamaCppClientError(RuntimeError):
     def __init__(self, kind: LlamaCppClientErrorKind) -> None:
         self.kind = kind
         super().__init__(f"llama.cpp request failed: {kind.value}")
+
+
+class LlamaCppUnsupportedCapabilityError(LlamaCppClientError):
+    """Raised only when the installed provider rejects an optional control capability."""
+
+    def __init__(self) -> None:
+        super().__init__(LlamaCppClientErrorKind.UNSUPPORTED_CAPABILITY)
 
 
 class LlamaCppReadiness(StrEnum):
@@ -72,10 +82,15 @@ class LlamaCppClient:
         self._slot_config = slot_config
         self._http_client = http_client
         self._api_key = api_key
+        self._capabilities = LLMRuntimeCapabilities()
         self._timeout = httpx.Timeout(
             timeout=slot_config.timeouts.read_seconds,
             connect=slot_config.timeouts.connect_seconds,
         )
+
+    @property
+    def capabilities(self) -> LLMRuntimeCapabilities:
+        return self._capabilities
 
     async def probe(self) -> LlamaCppProbe:
         """Check a configured runtime only when an explicit probe was requested."""
@@ -122,6 +137,8 @@ class LlamaCppClient:
 
     async def generate(self, request: LLMGenerationRequest) -> LLMGenerationResult:
         response = await self._request("POST", "/v1/chat/completions", json=self._chat_payload(request, stream=False))
+        if request.reasoning.budget is not None:
+            self._capabilities = replace(self._capabilities, supports_per_request_reasoning_budget=True)
         payload = self._json_object(response)
         choices = payload.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
@@ -152,6 +169,23 @@ class LlamaCppClient:
             raise LlamaCppClientError(LlamaCppClientErrorKind.UNEXPECTED_RESPONSE)
         return LLMTokenCountResult(input_tokens=count, provider_metadata={"provider": "llama_cpp"})
 
+    async def end_reasoning(self, completion_id: str) -> None:
+        """Stop reasoning only for a completion that opted into llama.cpp reasoning control."""
+
+        if not completion_id:
+            raise ValueError("completion_id is required for reasoning control.")
+        try:
+            await self._request(
+                "POST",
+                "/v1/chat/completions/control",
+                json={"id": completion_id, "action": "reasoning_end"},
+                unsupported_capability=True,
+            )
+        except LlamaCppUnsupportedCapabilityError:
+            self._capabilities = replace(self._capabilities, supports_realtime_reasoning_end=False)
+            raise
+        self._capabilities = replace(self._capabilities, supports_realtime_reasoning_end=True)
+
     async def stream_generate(self, request: LLMGenerationRequest) -> AsyncIterator[LLMStreamEvent]:
         """Normalize SSE into typed events while leaving cancellation untouched for httpx to clean up."""
 
@@ -164,18 +198,37 @@ class LlamaCppClient:
                 timeout=self._timeout,
             ) as response:
                 if response.status_code >= 400:
+                    if request.reasoning.budget is not None and response.status_code in {400, 404, 422}:
+                        self._capabilities = replace(self._capabilities, supports_per_request_reasoning_budget=False)
                     yield LLMStreamEvent(
                         kind=LLMStreamEventKind.ERROR,
                         error_code=self._status_error_kind(response.status_code).value,
                     )
                     return
-                saw_completion = False
+                if request.reasoning.budget is not None:
+                    self._capabilities = replace(self._capabilities, supports_per_request_reasoning_budget=True)
+                completion_id: str | None = None
+                started = False
+                last_usage: LLMUsage | None = None
+                last_provider_metadata: Mapping[str, JsonValue] = {"provider": "llama_cpp"}
                 async for line in response.aiter_lines():
-                    if not line or not line.startswith("data:"):
+                    if not line or line.startswith(":") or line.startswith(("event:", "id:", "retry:")):
                         continue
+                    if not line.startswith("data:"):
+                        yield LLMStreamEvent(
+                            kind=LLMStreamEventKind.ERROR,
+                            error_code=LlamaCppClientErrorKind.UNEXPECTED_RESPONSE.value,
+                            completion_id=completion_id,
+                        )
+                        return
                     raw_data = line[5:].strip()
                     if raw_data == "[DONE]":
-                        yield LLMStreamEvent(kind=LLMStreamEventKind.COMPLETED, provider_metadata={"provider": "llama_cpp"})
+                        yield LLMStreamEvent(
+                            kind=LLMStreamEventKind.COMPLETED,
+                            usage=last_usage,
+                            provider_metadata=last_provider_metadata,
+                            completion_id=completion_id,
+                        )
                         return
                     try:
                         payload = json.loads(raw_data)
@@ -183,62 +236,140 @@ class LlamaCppClient:
                         yield LLMStreamEvent(
                             kind=LLMStreamEventKind.ERROR,
                             error_code=LlamaCppClientErrorKind.MALFORMED_STREAM.value,
+                            completion_id=completion_id,
                         )
                         return
                     if not isinstance(payload, dict):
                         yield LLMStreamEvent(
                             kind=LLMStreamEventKind.ERROR,
                             error_code=LlamaCppClientErrorKind.MALFORMED_STREAM.value,
+                            completion_id=completion_id,
                         )
                         return
                     if "error" in payload:
                         yield LLMStreamEvent(
                             kind=LLMStreamEventKind.ERROR,
                             error_code=LlamaCppClientErrorKind.PROVIDER_FAILURE.value,
+                            completion_id=completion_id,
                         )
                         return
+                    payload_completion_id = payload.get("id")
+                    if payload_completion_id is not None:
+                        if not isinstance(payload_completion_id, str) or not payload_completion_id:
+                            yield LLMStreamEvent(
+                                kind=LLMStreamEventKind.ERROR,
+                                error_code=LlamaCppClientErrorKind.UNEXPECTED_RESPONSE.value,
+                                completion_id=completion_id,
+                            )
+                            return
+                        completion_id = payload_completion_id
+                    provider_metadata = self._provider_metadata(payload)
+                    if "timings" in provider_metadata:
+                        last_provider_metadata = provider_metadata
+                    if not started:
+                        started = True
+                        yield LLMStreamEvent(
+                            kind=LLMStreamEventKind.STARTED,
+                            provider_metadata=provider_metadata,
+                            completion_id=completion_id,
+                        )
                     usage = self._usage_from_payload(payload.get("usage"))
                     if usage is not None:
+                        last_usage = usage
                         yield LLMStreamEvent(
                             kind=LLMStreamEventKind.USAGE,
                             usage=usage,
-                            provider_metadata={"provider": "llama_cpp"},
+                            provider_metadata=provider_metadata,
+                            completion_id=completion_id,
                         )
                     choices = payload.get("choices")
+                    if choices is None:
+                        if usage is not None or payload_completion_id is not None:
+                            continue
+                        yield LLMStreamEvent(
+                            kind=LLMStreamEventKind.ERROR,
+                            error_code=LlamaCppClientErrorKind.UNEXPECTED_RESPONSE.value,
+                            completion_id=completion_id,
+                        )
+                        return
                     if not isinstance(choices, list) or not choices:
-                        continue
+                        yield LLMStreamEvent(
+                            kind=LLMStreamEventKind.ERROR,
+                            error_code=LlamaCppClientErrorKind.UNEXPECTED_RESPONSE.value,
+                            completion_id=completion_id,
+                        )
+                        return
                     choice = choices[0]
                     if not isinstance(choice, dict):
                         yield LLMStreamEvent(
                             kind=LLMStreamEventKind.ERROR,
                             error_code=LlamaCppClientErrorKind.MALFORMED_STREAM.value,
+                            completion_id=completion_id,
                         )
                         return
                     delta = choice.get("delta")
+                    if delta is not None and not isinstance(delta, dict):
+                        yield LLMStreamEvent(
+                            kind=LLMStreamEventKind.ERROR,
+                            error_code=LlamaCppClientErrorKind.MALFORMED_STREAM.value,
+                            completion_id=completion_id,
+                        )
+                        return
                     if isinstance(delta, dict):
                         content = delta.get("content")
+                        if content is not None and not isinstance(content, str):
+                            yield LLMStreamEvent(
+                                kind=LLMStreamEventKind.ERROR,
+                                error_code=LlamaCppClientErrorKind.MALFORMED_STREAM.value,
+                                completion_id=completion_id,
+                            )
+                            return
                         if isinstance(content, str) and content:
                             yield LLMStreamEvent(
                                 kind=LLMStreamEventKind.TEXT_DELTA,
                                 text=content,
-                                provider_metadata={"provider": "llama_cpp"},
+                                provider_metadata=provider_metadata,
+                                completion_id=completion_id,
                             )
                         reasoning = delta.get("reasoning_content", delta.get("reasoning"))
+                        if reasoning is not None and not isinstance(reasoning, str):
+                            yield LLMStreamEvent(
+                                kind=LLMStreamEventKind.ERROR,
+                                error_code=LlamaCppClientErrorKind.MALFORMED_STREAM.value,
+                                completion_id=completion_id,
+                            )
+                            return
                         if isinstance(reasoning, str) and reasoning:
                             yield LLMStreamEvent(
                                 kind=LLMStreamEventKind.REASONING_DELTA,
                                 text=reasoning,
-                                provider_metadata={"provider": "llama_cpp"},
+                                provider_metadata=provider_metadata,
+                                completion_id=completion_id,
                             )
-                    if isinstance(choice.get("finish_reason"), str):
-                        saw_completion = True
-                        yield LLMStreamEvent(kind=LLMStreamEventKind.COMPLETED, provider_metadata={"provider": "llama_cpp"})
+                    finish_reason = choice.get("finish_reason")
+                    if finish_reason is not None and not isinstance(finish_reason, str):
+                        yield LLMStreamEvent(
+                            kind=LLMStreamEventKind.ERROR,
+                            error_code=LlamaCppClientErrorKind.MALFORMED_STREAM.value,
+                            completion_id=completion_id,
+                        )
                         return
-                if not saw_completion:
-                    yield LLMStreamEvent(
-                        kind=LLMStreamEventKind.ERROR,
-                        error_code=LlamaCppClientErrorKind.UNEXPECTED_STREAM_END.value,
-                    )
+                    if isinstance(finish_reason, str):
+                        yield LLMStreamEvent(
+                            kind=LLMStreamEventKind.COMPLETED,
+                            usage=last_usage,
+                            provider_metadata=provider_metadata if "timings" in provider_metadata else last_provider_metadata,
+                            completion_id=completion_id,
+                            finish_reason=finish_reason,
+                        )
+                        return
+                yield LLMStreamEvent(
+                    kind=LLMStreamEventKind.ERROR,
+                    error_code=LlamaCppClientErrorKind.UNEXPECTED_STREAM_END.value,
+                    completion_id=completion_id,
+                )
+        except asyncio.CancelledError:
+            raise
         except httpx.TimeoutException:
             yield LLMStreamEvent(kind=LLMStreamEventKind.ERROR, error_code=LlamaCppClientErrorKind.TIMEOUT.value)
         except httpx.RequestError:
@@ -247,7 +378,14 @@ class LlamaCppClient:
                 error_code=LlamaCppClientErrorKind.CONNECTION_FAILURE.value,
             )
 
-    async def _request(self, method: str, path: str, **kwargs: object) -> httpx.Response:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        unsupported_capability: bool = False,
+        **kwargs: object,
+    ) -> httpx.Response:
         try:
             response = await self._http_client.request(
                 method,
@@ -262,6 +400,8 @@ class LlamaCppClient:
             raise LlamaCppClientError(LlamaCppClientErrorKind.CONNECTION_FAILURE) from error
         if response.status_code in {401, 403}:
             raise LlamaCppClientError(LlamaCppClientErrorKind.AUTHENTICATION_FAILURE)
+        if unsupported_capability and response.status_code in {400, 404, 405, 501}:
+            raise LlamaCppUnsupportedCapabilityError()
         if response.is_error:
             raise LlamaCppClientError(LlamaCppClientErrorKind.PROVIDER_FAILURE)
         return response
@@ -291,6 +431,10 @@ class LlamaCppClient:
             payload["chat_template_kwargs"] = {"enable_thinking": False}
         elif request.reasoning.mode is ReasoningMode.ON:
             payload["chat_template_kwargs"] = {"enable_thinking": True}
+        if request.reasoning.budget is not None:
+            payload["thinking_budget_tokens"] = request.reasoning.budget
+        if request.reasoning.enable_realtime_control:
+            payload["reasoning_control"] = True
         if request.structured_output is not None:
             response_format: dict[str, JsonValue] = {
                 "type": "json_schema",

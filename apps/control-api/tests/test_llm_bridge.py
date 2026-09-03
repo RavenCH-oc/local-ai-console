@@ -18,7 +18,12 @@ from local_ai_console_control.llm.config import (
     LlmTimeoutConfig,
     read_api_key,
 )
-from local_ai_console_control.llm.llama_cpp import LlamaCppClient, LlamaCppClientError, LlamaCppClientErrorKind
+from local_ai_console_control.llm.llama_cpp import (
+    LlamaCppClient,
+    LlamaCppClientError,
+    LlamaCppClientErrorKind,
+    LlamaCppUnsupportedCapabilityError,
+)
 from local_ai_console_control.llm.resolver import RuntimeResolutionError, TaskRuntimeResolver
 from local_ai_console_control.llm.types import (
     GenerationSettings,
@@ -219,10 +224,12 @@ class LlamaCppClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recorded_bodies[0]["max_tokens"], 64)
         self.assertEqual(recorded_bodies[0]["model"], "model-alias")
         self.assertEqual(recorded_bodies[0]["chat_template_kwargs"], {"enable_thinking": True})
+        self.assertEqual(recorded_bodies[0]["thinking_budget_tokens"], 32)
         self.assertNotIn("reasoning", recorded_bodies[0])
         self.assertEqual(recorded_bodies[0]["response_format"], {"type": "json_schema", "json_schema": {"schema": {"type": "object"}, "name": "result"}})
         self.assertEqual(recorded_bodies[1]["model"], "model-alias")
         self.assertIn("messages", recorded_bodies[1])
+        self.assertTrue(client.capabilities.supports_per_request_reasoning_budget)
 
     async def test_stream_normalizes_deltas_handles_malformed_data_and_closes_on_cancellation(self) -> None:
         async def collect(client: LlamaCppClient) -> list:
@@ -239,9 +246,12 @@ class LlamaCppClientTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         events = await collect(streamed)
-        self.assertEqual([event.kind for event in events], ["text_delta", "usage", "reasoning_delta", "completed"])
-        self.assertEqual(events[0].text, "Hel")
-        self.assertEqual(events[1].usage.input_tokens if events[1].usage else None, 1)
+        self.assertEqual(
+            [event.kind for event in events],
+            ["started", "text_delta", "usage", "reasoning_delta", "completed"],
+        )
+        self.assertEqual(events[1].text, "Hel")
+        self.assertEqual(events[2].usage.input_tokens if events[2].usage else None, 1)
 
         malformed = self.client(lambda request: httpx.Response(200, content=b"data: not-json\n\n"))
         malformed_events = await collect(malformed)
@@ -260,9 +270,108 @@ class LlamaCppClientTests(unittest.IsolatedAsyncioTestCase):
         tracking_stream = TrackingStream()
         cancellable = self.client(lambda request: httpx.Response(200, stream=tracking_stream))
         generator = cancellable.stream_generate(generation_request())
+        self.assertEqual((await anext(generator)).kind, LLMStreamEventKind.STARTED)
         self.assertEqual((await anext(generator)).kind, LLMStreamEventKind.TEXT_DELTA)
         await generator.aclose()
         self.assertTrue(tracking_stream.closed)
+
+    async def test_stream_preserves_completion_id_reasoning_content_final_usage_and_timings(self) -> None:
+        client = self.client(
+            lambda request: httpx.Response(
+                200,
+                content=(
+                    b'data: {"id":"completion-1","choices":[{"delta":{"reasoning_content":"think"}}]}\n\n'
+                    b'data: {"id":"completion-1","choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}],'
+                    b'"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5},'
+                    b'"timings":{"cache_n":1,"prompt_n":2,"predicted_n":3}}\n\n'
+                ),
+            )
+        )
+
+        events = [event async for event in client.stream_generate(generation_request())]
+
+        self.assertEqual([event.kind for event in events], ["started", "reasoning_delta", "usage", "text_delta", "completed"])
+        self.assertEqual(events[0].completion_id, "completion-1")
+        self.assertEqual(events[1].text, "think")
+        self.assertEqual(events[3].text, "answer")
+        self.assertEqual(events[-1].finish_reason, "stop")
+        self.assertEqual(events[-1].usage.total_tokens if events[-1].usage else None, 5)
+        self.assertEqual(events[-1].provider_metadata["timings"], {"cache_n": 1, "prompt_n": 2, "predicted_n": 3})
+
+    async def test_stream_reports_authentication_and_connection_errors_without_raw_details(self) -> None:
+        denied = self.client(lambda request: httpx.Response(401, text="private authentication detail"))
+        denied_events = [event async for event in denied.stream_generate(generation_request())]
+        self.assertEqual(denied_events[-1].error_code, "authentication_failure")
+        self.assertNotIn("private authentication detail", str(denied_events[-1]))
+
+        def disconnected(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("private endpoint unavailable", request=request)
+
+        unavailable = self.client(disconnected)
+        unavailable_events = [event async for event in unavailable.stream_generate(generation_request())]
+        self.assertEqual(unavailable_events[-1].error_code, "connection_failure")
+
+    async def test_stream_task_cancellation_preserves_cancelled_error_and_closes_transport(self) -> None:
+        class BlockingStream(httpx.AsyncByteStream):
+            def __init__(self) -> None:
+                self.waiting = asyncio.Event()
+                self.closed = False
+
+            async def __aiter__(self):
+                yield b'data: {"id":"completion-1","choices":[{"delta":{"content":"first"}}]}\n\n'
+                self.waiting.set()
+                await asyncio.Event().wait()
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        blocking_stream = BlockingStream()
+        client = self.client(lambda request: httpx.Response(200, stream=blocking_stream))
+        generator = client.stream_generate(generation_request())
+        self.assertEqual((await anext(generator)).kind, LLMStreamEventKind.STARTED)
+        self.assertEqual((await anext(generator)).kind, LLMStreamEventKind.TEXT_DELTA)
+        pending_event = asyncio.create_task(anext(generator))
+        await blocking_stream.waiting.wait()
+        pending_event.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await pending_event
+        self.assertTrue(blocking_stream.closed)
+
+    async def test_reasoning_control_and_budget_are_mapped_and_unsupported_control_is_explicit(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if request.url.path.endswith("/control"):
+                return httpx.Response(200, json={"ok": True})
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "result"}, "finish_reason": "stop"}]},
+            )
+
+        client = self.client(handler)
+        controlled_request = LLMGenerationRequest(
+            messages=(LLMMessage(LLMMessageRole.USER, "Test prompt"),),
+            task_kind=TaskKind.CHAT,
+            reasoning=ReasoningOptions(mode=ReasoningMode.ON, budget=0, enable_realtime_control=True),
+        )
+        await client.generate(controlled_request)
+        generated_payload = json.loads(requests[0].content)
+        self.assertEqual(generated_payload["thinking_budget_tokens"], 0)
+        self.assertTrue(generated_payload["reasoning_control"])
+        self.assertEqual(generated_payload["chat_template_kwargs"], {"enable_thinking": True})
+        self.assertTrue(client.capabilities.supports_per_request_reasoning_budget)
+
+        await client.end_reasoning("completion-1")
+        control_payload = json.loads(requests[1].content)
+        self.assertEqual(requests[1].url.path, "/v1/chat/completions/control")
+        self.assertEqual(control_payload, {"id": "completion-1", "action": "reasoning_end"})
+        self.assertTrue(client.capabilities.supports_realtime_reasoning_end)
+
+        unsupported = self.client(lambda request: httpx.Response(404, text="private unsupported detail"))
+        with self.assertRaises(LlamaCppUnsupportedCapabilityError):
+            await unsupported.end_reasoning("completion-2")
+        self.assertFalse(unsupported.capabilities.supports_realtime_reasoning_end)
 
     async def test_provider_failures_are_sanitized(self) -> None:
         client = self.client(lambda request: httpx.Response(500, text="private provider detail"))

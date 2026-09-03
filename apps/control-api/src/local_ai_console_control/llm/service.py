@@ -9,6 +9,7 @@ from local_ai_console_control.llm.resolver import TaskRuntimeResolver
 from local_ai_console_control.llm.types import (
     LLMGenerationRequest,
     LLMGenerationResult,
+    LLMRuntimeCapabilities,
     LLMStreamEvent,
     LLMTokenCountResult,
     RuntimeSlot,
@@ -16,11 +17,16 @@ from local_ai_console_control.llm.types import (
 
 
 class LlmProviderClient(Protocol):
+    @property
+    def capabilities(self) -> LLMRuntimeCapabilities: ...
+
     async def generate(self, request: LLMGenerationRequest) -> LLMGenerationResult: ...
 
     async def count_input_tokens(self, request: LLMGenerationRequest) -> LLMTokenCountResult: ...
 
     def stream_generate(self, request: LLMGenerationRequest) -> AsyncIterator[LLMStreamEvent]: ...
+
+    async def end_reasoning(self, completion_id: str) -> None: ...
 
 
 class LLMService:
@@ -43,3 +49,13 @@ class LLMService:
     async def stream_generate(self, request: LLMGenerationRequest) -> AsyncIterator[LLMStreamEvent]:
         async for event in self._client_for(request).stream_generate(request):
             yield event
+
+    def capabilities_for(self, slot: RuntimeSlot) -> LLMRuntimeCapabilities:
+        """Expose narrow provider capabilities without leaking transport implementation upward."""
+
+        return self._clients[slot].capabilities
+
+    async def end_reasoning(self, *, slot: RuntimeSlot, completion_id: str) -> None:
+        """Request a reasoning-only stop; this intentionally does not cancel the generation stream."""
+
+        await self._clients[slot].end_reasoning(completion_id)

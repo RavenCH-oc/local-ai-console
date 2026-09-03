@@ -65,6 +65,7 @@ class ReasoningMode(StrEnum):
 class LLMStreamEventKind(StrEnum):
     """Normalized stream events; raw SSE data does not escape the provider adapter."""
 
+    STARTED = "started"
     TEXT_DELTA = "text_delta"
     REASONING_DELTA = "reasoning_delta"
     USAGE = "usage"
@@ -116,6 +117,7 @@ class GenerationSettings:
 class ReasoningOptions:
     mode: ReasoningMode = ReasoningMode.DEFAULT
     budget: int | None = None
+    enable_realtime_control: bool = False
 
     def __post_init__(self) -> None:
         if self.budget is not None and self.budget < 0:
@@ -173,9 +175,19 @@ class LLMTokenCountResult:
 
 
 @dataclass(frozen=True, slots=True)
+class LLMRuntimeCapabilities:
+    """Small capability snapshot; detailed cross-provider contracts remain a later phase."""
+
+    supports_realtime_reasoning_end: bool | None = None
+    supports_per_request_reasoning_budget: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class LLMStreamEvent:
     kind: LLMStreamEventKind
     text: str | None = None
     usage: LLMUsage | None = None
     provider_metadata: Mapping[str, JsonValue] = field(default_factory=dict)
     error_code: str | None = None
+    completion_id: str | None = None
+    finish_reason: str | None = None
