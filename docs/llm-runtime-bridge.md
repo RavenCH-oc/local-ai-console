@@ -41,4 +41,9 @@ $env:LOCAL_AI_CONSOLE_RUN_LIVE_LLM_TESTS = "1"
 
 The script reports safe booleans, event counts, bounded timing-field names, and short local timing measurements only. It verifies status and expected-model matching, the native full-chat `input_tokens` endpoint, a UTF-8 non-stream request with reasoning disabled, schema-constrained JSON output, typed streaming with separated reasoning/content events, `on` and `auto` reasoning behavior, per-request budget compatibility, optional reasoning-only control, and local stream cancellation followed by a short slot-availability request. It does not print the configured endpoint, credential, completion ID, model response text, or raw provider response. Ordinary unit and CI tests continue to use `httpx.MockTransport` and never contact a private runtime.
 
+Phase 1B-2C adds an optional prefix-cache-only mode to the same opt-in script. It
+uses public synthetic prompts, measures only bounded timing counters, and does not
+use persistent slots or cache APIs. See [llama.cpp prefix cache baseline](llama-cpp-prefix-cache-baseline.md)
+for the measurement method, observed results, and prompt-shaping guidance.
+
 For the Controller Runtime layout and its public/private boundary, see [Runtime data boundary](runtime-data-boundary.md).

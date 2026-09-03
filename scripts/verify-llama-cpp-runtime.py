@@ -33,6 +33,8 @@ from local_ai_console_control.llm.types import (
 
 
 LIVE_TEST_ENVIRONMENT_VARIABLE = "LOCAL_AI_CONSOLE_RUN_LIVE_LLM_TESTS"
+PREFIX_CACHE_ONLY_ENVIRONMENT_VARIABLE = "LOCAL_AI_CONSOLE_RUN_PREFIX_CACHE_BENCHMARK_ONLY"
+PREFIX_CACHE_BENCHMARK_REVISION = "phase-1b-2c-v3"
 
 
 def request(
@@ -91,6 +93,260 @@ def classify_reasoning_budget(
     if default["reasoning_delta_count"] and not zero["reasoning_delta_count"] and positive["completed"]:
         return "supported"
     return "partial"
+
+
+def synthetic_stable_prefix(*, variant: str, repetitions: int) -> str:
+    """Build a deterministic public-only long prefix without embedding user/runtime data."""
+
+    unit = (
+        "This is public synthetic prefix-cache benchmark material. "
+        "It contains no personal data, credentials, runtime configuration, or private prompts. "
+        "Maintain the stated synthetic conversation boundaries and answer only the current request."
+    )
+    return (
+        f"SYNTHETIC PREFIX BENCHMARK {PREFIX_CACHE_BENCHMARK_REVISION} VARIANT {variant}\n"
+        "EARLY POLICY MARKER: baseline\n"
+        + "\n".join(unit for _ in range(repetitions))
+    )
+
+
+def synthetic_messages(*, stable_prefix: str, current_request: str, appended: bool = False) -> tuple[LLMMessage, ...]:
+    messages: list[LLMMessage] = [
+        LLMMessage(LLMMessageRole.SYSTEM, stable_prefix),
+        LLMMessage(LLMMessageRole.USER, "Synthetic conversation opening: summarize the public benchmark objective."),
+        LLMMessage(LLMMessageRole.ASSISTANT, "Synthetic assistant acknowledgement of the public benchmark objective."),
+    ]
+    if appended:
+        messages.extend(
+            (
+                LLMMessage(LLMMessageRole.USER, "Synthetic follow-up: preserve the established benchmark context."),
+                LLMMessage(LLMMessageRole.ASSISTANT, "Synthetic assistant continuation with no external or private facts."),
+            )
+        )
+    messages.append(LLMMessage(LLMMessageRole.USER, current_request))
+    return tuple(messages)
+
+
+def cache_reuse_ratio(cache_n: object, prompt_n: object) -> float | None:
+    if (
+        isinstance(cache_n, bool)
+        or isinstance(prompt_n, bool)
+        or not isinstance(cache_n, int | float)
+        or not isinstance(prompt_n, int | float)
+    ):
+        return None
+    denominator = cache_n + prompt_n
+    return None if denominator == 0 else round(cache_n / denominator, 6)
+
+
+async def measure_prefix_sample(service, *, label: str, sample_request: LLMGenerationRequest) -> dict[str, object]:
+    """Measure a real stream without retaining or printing generated text."""
+
+    input_token_result = await service.count_input_tokens(sample_request)
+    started_at = time.monotonic()
+    first_sse_ms: int | None = None
+    first_reasoning_ms: int | None = None
+    first_visible_ms: int | None = None
+    completed_event: LLMStreamEvent | None = None
+    errors: list[str | None] = []
+    async for event in service.stream_generate(sample_request):
+        elapsed_ms = round((time.monotonic() - started_at) * 1000)
+        if event.kind is LLMStreamEventKind.STARTED and first_sse_ms is None:
+            first_sse_ms = elapsed_ms
+        elif event.kind is LLMStreamEventKind.REASONING_DELTA and first_reasoning_ms is None:
+            first_reasoning_ms = elapsed_ms
+        elif event.kind is LLMStreamEventKind.TEXT_DELTA and first_visible_ms is None:
+            first_visible_ms = elapsed_ms
+        elif event.kind is LLMStreamEventKind.COMPLETED:
+            completed_event = event
+        elif event.kind is LLMStreamEventKind.ERROR:
+            errors.append(event.error_code)
+    wall_time_ms = round((time.monotonic() - started_at) * 1000)
+    if completed_event is None or errors:
+        raise RuntimeError(f"Prefix-cache sample {label} did not complete cleanly.")
+    timings = completed_event.provider_metadata.get("timings")
+    timing_values = timings if isinstance(timings, dict) else {}
+    cache_n = timing_values.get("cache_n")
+    prompt_n = timing_values.get("prompt_n")
+    return {
+        "label": label,
+        "input_tokens": input_token_result.input_tokens,
+        "cache_n": cache_n,
+        "prompt_n": prompt_n,
+        "reuse_ratio": cache_reuse_ratio(cache_n, prompt_n),
+        "prompt_ms": timing_values.get("prompt_ms"),
+        "prompt_per_second": timing_values.get("prompt_per_second"),
+        "predicted_n": timing_values.get("predicted_n"),
+        "predicted_ms": timing_values.get("predicted_ms"),
+        "predicted_per_second": timing_values.get("predicted_per_second"),
+        "first_sse_event_ms": first_sse_ms,
+        "first_reasoning_delta_ms": first_reasoning_ms,
+        "first_visible_content_delta_ms": first_visible_ms,
+        "completion_time_ms": wall_time_ms,
+        "finish_reason": completed_event.finish_reason,
+    }
+
+
+async def calibrated_prefix_repetitions(service, *, reasoning: ReasoningOptions) -> tuple[int, int]:
+    """Use the provider tokenizer rather than character count to target a practical 4K–8K prompt."""
+
+    for repetitions in (160, 224, 288):
+        calibration_request = request(
+            messages=synthetic_messages(
+                stable_prefix=synthetic_stable_prefix(variant="calibration", repetitions=repetitions),
+                current_request="Synthetic token calibration request.",
+            ),
+            reasoning=reasoning,
+            max_output_tokens=8,
+        )
+        input_tokens = (await service.count_input_tokens(calibration_request)).input_tokens
+        if 4096 <= input_tokens <= 8192:
+            return repetitions, input_tokens
+    raise RuntimeError("Unable to calibrate a synthetic stable prefix into the 4K–8K token range.")
+
+
+async def verify_prefix_cache_baseline(service) -> dict[str, object]:
+    """Run public synthetic common-prefix measurements; persistent slot APIs are never used."""
+
+    reasoning_off = ReasoningOptions(mode=ReasoningMode.OFF)
+    repetitions, calibration_input_tokens = await calibrated_prefix_repetitions(service, reasoning=reasoning_off)
+    experiment_samples: list[dict[str, object]] = []
+    for variant in ("alpha", "bravo"):
+        stable_prefix = synthetic_stable_prefix(variant=variant, repetitions=repetitions)
+        baseline_messages = synthetic_messages(
+            stable_prefix=stable_prefix,
+            current_request="Return a short public benchmark acknowledgement.",
+        )
+        append_messages = synthetic_messages(
+            stable_prefix=stable_prefix,
+            appended=True,
+            current_request="Return a short acknowledgement of the appended synthetic turn.",
+        )
+        changed_suffix_messages = synthetic_messages(
+            stable_prefix=stable_prefix,
+            appended=True,
+            current_request="Return a different short acknowledgement for the current synthetic turn.",
+        )
+        mutated_prefix = stable_prefix.replace("EARLY POLICY MARKER: baseline", "EARLY POLICY MARKER: mutated", 1)
+        mutated_messages = synthetic_messages(
+            stable_prefix=mutated_prefix,
+            appended=True,
+            current_request="Return a short acknowledgement of the appended synthetic turn.",
+        )
+        experiment_samples.append(
+            {
+                "variant": variant,
+                "cold": await measure_prefix_sample(
+                    service,
+                    label=f"cold-{variant}",
+                    sample_request=request(messages=baseline_messages, reasoning=reasoning_off, max_output_tokens=8),
+                ),
+                "append": await measure_prefix_sample(
+                    service,
+                    label=f"append-{variant}",
+                    sample_request=request(messages=append_messages, reasoning=reasoning_off, max_output_tokens=8),
+                ),
+                "suffix_change": await measure_prefix_sample(
+                    service,
+                    label=f"suffix-{variant}",
+                    sample_request=request(messages=changed_suffix_messages, reasoning=reasoning_off, max_output_tokens=8),
+                ),
+                "early_mutation": await measure_prefix_sample(
+                    service,
+                    label=f"early-mutation-{variant}",
+                    sample_request=request(messages=mutated_messages, reasoning=reasoning_off, max_output_tokens=8),
+                ),
+            }
+        )
+
+    stable_prefix = synthetic_stable_prefix(variant="dynamic-placement", repetitions=repetitions)
+    history_messages = (
+        LLMMessage(LLMMessageRole.USER, "Synthetic history request with public-only content."),
+        LLMMessage(LLMMessageRole.ASSISTANT, "Synthetic history response with public-only content."),
+    )
+    early_v1 = (
+        LLMMessage(LLMMessageRole.SYSTEM, stable_prefix + "\nDYNAMIC KNOWLEDGE: version one."),
+        *history_messages,
+        LLMMessage(LLMMessageRole.USER, "Return a short synthetic acknowledgement."),
+    )
+    early_v2 = (
+        LLMMessage(LLMMessageRole.SYSTEM, stable_prefix + "\nDYNAMIC KNOWLEDGE: version two."),
+        *history_messages,
+        LLMMessage(LLMMessageRole.USER, "Return a short synthetic acknowledgement."),
+    )
+    late_v1 = (
+        LLMMessage(LLMMessageRole.SYSTEM, stable_prefix),
+        *history_messages,
+        LLMMessage(LLMMessageRole.USER, "Return a short synthetic acknowledgement. DYNAMIC KNOWLEDGE: version one."),
+    )
+    late_v2 = (
+        LLMMessage(LLMMessageRole.SYSTEM, stable_prefix),
+        *history_messages,
+        LLMMessage(LLMMessageRole.USER, "Return a short synthetic acknowledgement. DYNAMIC KNOWLEDGE: version two."),
+    )
+    dynamic_placement = {
+        "dynamic_early_initial": await measure_prefix_sample(
+            service,
+            label="dynamic-early-v1",
+            sample_request=request(messages=early_v1, reasoning=reasoning_off, max_output_tokens=8),
+        ),
+        "dynamic_early_changed": await measure_prefix_sample(
+            service,
+            label="dynamic-early-v2",
+            sample_request=request(messages=early_v2, reasoning=reasoning_off, max_output_tokens=8),
+        ),
+        "dynamic_late_initial": await measure_prefix_sample(
+            service,
+            label="dynamic-late-v1",
+            sample_request=request(messages=late_v1, reasoning=reasoning_off, max_output_tokens=8),
+        ),
+        "dynamic_late_changed": await measure_prefix_sample(
+            service,
+            label="dynamic-late-v2",
+            sample_request=request(messages=late_v2, reasoning=reasoning_off, max_output_tokens=8),
+        ),
+    }
+
+    correctness_prefix_a = synthetic_stable_prefix(variant="correctness", repetitions=repetitions) + (
+        "\nFor this isolated correctness check, answer exactly CACHE-CORRECT-A."
+    )
+    correctness_prefix_b = correctness_prefix_a.replace("CACHE-CORRECT-A", "CACHE-CORRECT-B", 1)
+    correctness_a = await service.generate(
+        request(
+            messages=synthetic_messages(
+                stable_prefix=correctness_prefix_a,
+                current_request="Return the required correctness marker.",
+            ),
+            reasoning=reasoning_off,
+            max_output_tokens=8,
+        )
+    )
+    correctness_b = await service.generate(
+        request(
+            messages=synthetic_messages(
+                stable_prefix=correctness_prefix_b,
+                current_request="Return the required correctness marker.",
+            ),
+            reasoning=reasoning_off,
+            max_output_tokens=8,
+        )
+    )
+    correctness_result = {
+        "early_instruction_a_followed": "CACHE-CORRECT-A" in correctness_a.assistant_text,
+        "early_instruction_b_followed": "CACHE-CORRECT-B" in correctness_b.assistant_text,
+        "stale_a_not_observed_after_b": "CACHE-CORRECT-A" not in correctness_b.assistant_text,
+    }
+    if not all(correctness_result.values()):
+        raise RuntimeError("The cache correctness smoke test observed possible cross-prompt state leakage.")
+
+    return {
+        "cache_prompt_explicitly_sent": False,
+        "calibration": {"stable_prefix_repetitions": repetitions, "input_tokens": calibration_input_tokens},
+        "individual_samples": experiment_samples,
+        "dynamic_placement": dynamic_placement,
+        "correctness": correctness_result,
+        "persistent_slot_cache": "not_relied_upon",
+    }
 
 
 async def verify() -> dict[str, object]:
@@ -260,6 +516,8 @@ async def verify() -> dict[str, object]:
         if not post_cancel.assistant_text:
             raise RuntimeError("The post-cancel slot availability request did not return visible content.")
 
+        prefix_cache_baseline = await verify_prefix_cache_baseline(service)
+
         timings = generated.provider_metadata.get("timings")
         timing_fields = sorted(timings) if isinstance(timings, dict) else []
         return {
@@ -293,6 +551,25 @@ async def verify() -> dict[str, object]:
                 "post_cancel_slot_probe_ms": post_cancel_slot_probe_ms,
                 "server_generation_cancellation": "inferred_from_slot_availability_only",
             },
+            "prefix_cache_baseline": prefix_cache_baseline,
+        }
+    finally:
+        await bridge.aclose()
+
+
+async def verify_prefix_cache_only() -> dict[str, object]:
+    """Run only the opt-in Phase 1B-2C benchmark against the configured Main runtime."""
+
+    runtime_paths = resolve_runtime_paths()
+    bridge = LlmRuntimeBridge(config_directory=runtime_paths.config)
+    try:
+        statuses = await bridge.probe()
+        main_status = statuses[RuntimeSlot.MAIN]
+        if main_status.state is not RuntimeSlotState.READY:
+            raise RuntimeError("The configured Main runtime did not become ready.")
+        return {
+            "main_state": main_status.state.value,
+            "prefix_cache_baseline": await verify_prefix_cache_baseline(bridge.service),
         }
     finally:
         await bridge.aclose()
@@ -303,7 +580,12 @@ def main() -> int:
         print(f"Skipped. Set {LIVE_TEST_ENVIRONMENT_VARIABLE}=1 to run private live-runtime verification.")
         return 0
     try:
-        result = asyncio.run(verify())
+        verification = (
+            verify_prefix_cache_only()
+            if os.environ.get(PREFIX_CACHE_ONLY_ENVIRONMENT_VARIABLE) == "1"
+            else verify()
+        )
+        result = asyncio.run(verification)
     except RuntimeError as error:
         print(f"Live llama.cpp runtime verification failed: {error}", file=sys.stderr)
         return 1
