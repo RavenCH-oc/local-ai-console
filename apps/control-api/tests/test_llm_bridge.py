@@ -176,27 +176,53 @@ class LlamaCppClientTests(unittest.IsolatedAsyncioTestCase):
         def handler(request: httpx.Request) -> httpx.Response:
             body = json.loads(request.content)
             recorded_bodies.append(body)
-            if request.url.path.endswith("/tokenize"):
-                return httpx.Response(200, json={"tokens": [1, 2, 3, 4]})
+            if request.url.path.endswith("/input_tokens"):
+                return httpx.Response(200, json={"input_tokens": 4})
             return httpx.Response(
                 200,
                 json={
                     "choices": [{"message": {"content": "result"}, "finish_reason": "stop"}],
                     "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+                    "timings": {
+                        "cache_n": 1,
+                        "prompt_n": 3,
+                        "prompt_ms": 2.5,
+                        "prompt_per_second": 1200.0,
+                        "predicted_n": 2,
+                        "predicted_ms": 4.0,
+                        "predicted_per_second": 500.0,
+                        "unbounded_provider_detail": "must not escape",
+                    },
                 },
             )
 
-        client = self.client(handler)
+        client = self.client(handler, expected_model_alias="model-alias")
         request = generation_request(structured=True)
         generated = await client.generate(request)
         counted = await client.count_input_tokens(request)
 
         self.assertEqual(generated.assistant_text, "result")
         self.assertEqual(generated.usage.total_tokens if generated.usage else None, 5)
+        self.assertEqual(
+            generated.provider_metadata["timings"],
+            {
+                "cache_n": 1,
+                "prompt_n": 3,
+                "prompt_ms": 2.5,
+                "prompt_per_second": 1200.0,
+                "predicted_n": 2,
+                "predicted_ms": 4.0,
+                "predicted_per_second": 500.0,
+            },
+        )
         self.assertEqual(counted.input_tokens, 4)
         self.assertEqual(recorded_bodies[0]["max_tokens"], 64)
-        self.assertEqual(recorded_bodies[0]["reasoning"], {"mode": "on", "budget": 32})
+        self.assertEqual(recorded_bodies[0]["model"], "model-alias")
+        self.assertEqual(recorded_bodies[0]["chat_template_kwargs"], {"enable_thinking": True})
+        self.assertNotIn("reasoning", recorded_bodies[0])
         self.assertEqual(recorded_bodies[0]["response_format"], {"type": "json_schema", "json_schema": {"schema": {"type": "object"}, "name": "result"}})
+        self.assertEqual(recorded_bodies[1]["model"], "model-alias")
+        self.assertIn("messages", recorded_bodies[1])
 
     async def test_stream_normalizes_deltas_handles_malformed_data_and_closes_on_cancellation(self) -> None:
         async def collect(client: LlamaCppClient) -> list:

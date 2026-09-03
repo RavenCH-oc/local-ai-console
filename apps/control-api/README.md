@@ -44,3 +44,5 @@ Prompt Workbench resources are private runtime data. The API accepts manually en
 For the public/private boundary and canonical layout, see [`docs/runtime-data-boundary.md`](../../docs/runtime-data-boundary.md).
 For the Prompt Workbench persistence and lifecycle design, see [`docs/prompt-workbench-domain.md`](../../docs/prompt-workbench-domain.md).
 For the private LLM configuration format, provider boundary, and runtime states, see [`docs/llm-runtime-bridge.md`](../../docs/llm-runtime-bridge.md).
+
+The opt-in private llama.cpp verification script is [`scripts/verify-llama-cpp-runtime.py`](../../scripts/verify-llama-cpp-runtime.py). It remains skipped unless `LOCAL_AI_CONSOLE_RUN_LIVE_LLM_TESTS=1` is set, so CI never requires a private runtime.

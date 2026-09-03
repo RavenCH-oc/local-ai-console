@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 import json
+import math
 
 import httpx
 
@@ -136,21 +137,17 @@ class LlamaCppClient:
             assistant_text=message["content"],
             finish_reason=finish_reason,
             usage=self._usage_from_payload(payload.get("usage")),
-            provider_metadata={"provider": "llama_cpp"},
+            provider_metadata=self._provider_metadata(payload),
         )
 
     async def count_input_tokens(self, request: LLMGenerationRequest) -> LLMTokenCountResult:
-        """Delegate full-chat tokenization to the configured provider; never estimate locally."""
+        """Count the provider's complete chat request, including its configured chat template."""
 
         payload = self._chat_payload(request, stream=False)
         payload.pop("stream", None)
-        response = await self._request("POST", "/v1/chat/completions/tokenize", json=payload)
+        response = await self._request("POST", "/v1/chat/completions/input_tokens", json=payload)
         response_payload = self._json_object(response)
-        count = response_payload.get("count")
-        if not isinstance(count, int) or isinstance(count, bool):
-            tokens = response_payload.get("tokens")
-            if isinstance(tokens, list):
-                count = len(tokens)
+        count = response_payload.get("input_tokens")
         if not isinstance(count, int) or isinstance(count, bool) or count < 0:
             raise LlamaCppClientError(LlamaCppClientErrorKind.UNEXPECTED_RESPONSE)
         return LLMTokenCountResult(input_tokens=count, provider_metadata={"provider": "llama_cpp"})
@@ -290,11 +287,10 @@ class LlamaCppClient:
         payload.update({key: value for key, value in setting_values.items() if value is not None})
         if settings.stop:
             payload["stop"] = list(settings.stop)
-        if request.reasoning.mode is not ReasoningMode.DEFAULT or request.reasoning.budget is not None:
-            reasoning: dict[str, JsonValue] = {"mode": request.reasoning.mode.value}
-            if request.reasoning.budget is not None:
-                reasoning["budget"] = request.reasoning.budget
-            payload["reasoning"] = reasoning
+        if request.reasoning.mode is ReasoningMode.OFF:
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        elif request.reasoning.mode is ReasoningMode.ON:
+            payload["chat_template_kwargs"] = {"enable_thinking": True}
         if request.structured_output is not None:
             response_format: dict[str, JsonValue] = {
                 "type": "json_schema",
@@ -339,6 +335,38 @@ class LlamaCppClient:
                 return None
             values[destination] = value
         return LLMUsage(**values)
+
+    @staticmethod
+    def _provider_metadata(payload: Mapping[str, object]) -> dict[str, JsonValue]:
+        """Keep only the finite llama.cpp timing fields useful for local diagnostics."""
+
+        metadata: dict[str, JsonValue] = {"provider": "llama_cpp"}
+        timings = payload.get("timings")
+        if not isinstance(timings, dict):
+            return metadata
+        allowed_fields = (
+            "cache_n",
+            "prompt_n",
+            "prompt_ms",
+            "prompt_per_second",
+            "predicted_n",
+            "predicted_ms",
+            "predicted_per_second",
+        )
+        safe_timings: dict[str, JsonValue] = {}
+        for field in allowed_fields:
+            value = timings.get(field)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int | float)
+                or value < 0
+                or not math.isfinite(value)
+            ):
+                continue
+            safe_timings[field] = value
+        if safe_timings:
+            metadata["timings"] = safe_timings
+        return metadata
 
     @staticmethod
     def _status_error_kind(status_code: int) -> LlamaCppClientErrorKind:

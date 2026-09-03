@@ -6,7 +6,7 @@ The planned architecture pairs a Windows 11 controller with a Linux/Ubuntu LLM n
 
 ## Development status
 
-This repository currently contains a public-safe project baseline, runtime-data boundary contract, shared architecture contracts, a Windows Controller API with private Prompt Workbench SQLite persistence, a minimal Linux Node Agent foundation, a desktop-first React web shell, and an LLM runtime bridge foundation. Prompt Workbench currently supports manual project, discussion, state, and revision lifecycle management. The bridge supports private llama.cpp-compatible runtime configuration and explicit status probes, but no model generation endpoint, controller-to-node integration, chat workflow, prompt generation, or quality evaluation is available yet.
+This repository currently contains a public-safe project baseline, runtime-data boundary contract, shared architecture contracts, a Windows Controller API with private Prompt Workbench SQLite persistence, a minimal Linux Node Agent foundation, a desktop-first React web shell, and an LLM runtime bridge. The bridge has an opt-in private runtime verification path for llama.cpp-compatible status, chat-shaped token counting, generation, structured JSON, and streaming, but it exposes no public model generation endpoint. Prompt Workbench currently supports manual project, discussion, state, and revision lifecycle management; controller-to-node integration, chat workflow, prompt generation, and quality evaluation are not available yet.
 
 ## Public repository boundary
 
