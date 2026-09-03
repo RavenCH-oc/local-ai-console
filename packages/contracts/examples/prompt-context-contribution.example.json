@@ -1,0 +1,14 @@
+{
+  "contract_type": "prompt_context_contribution",
+  "schema_version": "1.1.0",
+  "id": "example_base_instruction_contribution",
+  "kind": "instruction",
+  "source": {
+    "kind": "reference",
+    "reference": "public_instruction_template"
+  },
+  "stability": "stable",
+  "priority": 100,
+  "token_budget": 256,
+  "extensions": {}
+}

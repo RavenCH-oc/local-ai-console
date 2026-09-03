@@ -1,0 +1,29 @@
+{
+  "contract_type": "tool_definition",
+  "schema_version": "1.1.0",
+  "id": "example_public_status_tool",
+  "display_name": "Example Public Status Tool",
+  "description": "A generic contract definition only; no executor is implemented.",
+  "input_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "permission": {
+    "permission_class": "read_only",
+    "approval_policy": "auto",
+    "extensions": {}
+  },
+  "result_limits": {
+    "max_result_bytes": 4096,
+    "max_result_tokens": 512,
+    "timeout_ms": 5000,
+    "extensions": {}
+  },
+  "executor": {
+    "kind": "example_executor",
+    "reference": "example_public_status_tool",
+    "extensions": {}
+  },
+  "extensions": {}
+}

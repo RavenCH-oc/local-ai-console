@@ -1,0 +1,26 @@
+{
+  "contract_type": "runtime_compatibility_record",
+  "schema_version": "1.1.0",
+  "id": "example_runtime_compatibility",
+  "provider": "example_chat_provider",
+  "provider_version": "example-build",
+  "model_profile_id": "example_main_model",
+  "tested_at": "2026-01-01T00:00:00Z",
+  "capabilities": {
+    "streaming": {
+      "status": "supported",
+      "notes": "Illustrative compatibility result only."
+    },
+    "reasoning_transport": {
+      "status": "unverified",
+      "notes": "No deployment-specific claim is made by this sanitized example."
+    },
+    "prompt_cache": {
+      "status": "unavailable",
+      "notes": "Illustrates an optional deployment resource that is not present."
+    }
+  },
+  "notes": "Private runtime compatibility records belong outside the repository.",
+  "benchmark_reference": "public_benchmark_example",
+  "extensions": {}
+}

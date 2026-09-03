@@ -1,0 +1,18 @@
+{
+  "contract_type": "skill_profile",
+  "schema_version": "1.1.0",
+  "id": "example_visual_workflow_skill",
+  "display_name": "Example Visual Workflow Skill",
+  "description": "A generic, non-executing skill-profile contract example.",
+  "instruction_source": {
+    "kind": "public_package",
+    "reference": "example_skill_instructions",
+    "version": "example-v1",
+    "extensions": {}
+  },
+  "required_capabilities": ["structured_output"],
+  "knowledge_namespaces": ["comfyui/example"],
+  "allowed_tool_ids": ["example_public_status_tool"],
+  "default_task_kind": "prompt_generation",
+  "extensions": {}
+}

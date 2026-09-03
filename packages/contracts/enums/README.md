@@ -1,5 +1,5 @@
 # Enum location
 
-Enum values are defined canonically in the shared JSON Schema rather than duplicated in a second serialized file. The relevant `$defs` are `runtimeSlot`, `runtimeTargetPreference`, `taskKind`, `contextMode`, `promptWorkflowMode`, `promptResponseKind`, `searchMode`, and `platform`.
+Enum values are defined canonically in the shared JSON Schema rather than duplicated in a second serialized file. The relevant `$defs` are `runtimeSlot`, `runtimeTargetPreference`, `taskKind`, `contextMode`, `promptWorkflowMode`, `promptResponseKind`, `searchMode`, `platform`, `capabilityStatus`, `contextStability`, `toolPermissionClass`, `toolApprovalPolicy`, and `runtimeAffinityScope`.
 
 Semantic explanations and current deployment assumptions are documented in `docs/architecture-contracts.md`.

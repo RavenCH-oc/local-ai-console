@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Phase 0C freezes the first language-neutral contract layer for Local AI Console. These contracts describe configuration and domain data shared by future controller, web, node, workflow, context, and search components. They do not implement any application behavior.
+Phase 0C freezes the first language-neutral contract layer for Local AI Console. These contracts describe configuration and domain data shared by future controller, web, node, workflow, context, and search components. They do not implement any application behavior. Phase 1B-3 adds capability, orchestration-boundary, Knowledge, Skill, Tool, and prompt-context contracts without replacing the Phase 0C source.
 
 The canonical serialized representation is JSON Schema Draft 2020-12 in `packages/contracts/schemas/local-ai-console-contracts.schema.json`. Sanitized examples live beside it in `packages/contracts/examples/`.
 
 ## Identity, versioning, and references
 
-Named domain objects use stable machine IDs such as `example_main_model`, `personal`, and `example_image_prompt_workflow`. Display names are for presentation only. Persisted or configurable contracts include `schema_version`; the initial version is `1.0.0`.
+Named domain objects use stable machine IDs such as `example_main_model`, `personal`, and `example_image_prompt_workflow`. Display names are for presentation only. Persisted or configurable contracts include `schema_version`; existing `1.0.0` contracts remain valid, and the additive Phase 1B-3 contract types start at `1.1.0`.
 
 Cross-contract links use explicit ID fields such as `preferred_model_profile_id`, `generation_preset_id`, `context_policy_id`, and `workflow_profile_id`. Contracts do not copy whole referenced objects, use a display name as an identity, or use a filesystem path as an identity.
 
@@ -26,6 +26,8 @@ Cross-contract links use explicit ID fields such as `preferred_model_profile_id`
 | Prompt Project != Chat | A project is a long-lived prompt-work item with structured state; a chat is not its replacement. |
 | Prompt Revision != LLM message | Revisions are versioned prompt artifacts; discussion can occur without producing one. |
 | SearchProvider != LLM runtime | Search is an independent provider abstraction, not an LLM runtime slot. |
+| Model capability != Provider capability != Runtime compatibility | A model declaration, a backend transport surface, and a tested build/model/template result answer different questions. |
+| Knowledge != Skill != Tool | Knowledge is data, a Skill is procedure, and a Tool is an executable capability subject to permission. |
 
 ## Runtime slots and tasks
 
@@ -51,7 +53,11 @@ Model locations can be an external path in private runtime configuration or an o
 
 Startup settings include load-time concerns such as context size, GPU placement, KV cache, batch size, flash attention, and parallelism. GenerationPreset contains per-request defaults only: output limit, sampling values, seed, stop strings, and reasoning defaults. A preset must not contain model paths, GPU placement, context size, or KV settings.
 
-The initial capability flags are `supports_thinking`, `supports_reasoning_budget`, `supports_system_prompt`, `supports_native_context_shift`, `supports_images`, and `supports_tools`. Backend-specific request behavior belongs behind `request_adapter` or `extensions`, not scattered through generic contracts.
+The initial capability flags are `supports_thinking`, `supports_reasoning_budget`, `supports_system_prompt`, `supports_native_context_shift`, `supports_images`, and `supports_tools`. They are static model/configuration declarations, not evidence that a particular deployed runtime has passed an integration test. Backend-specific request behavior belongs behind `request_adapter` or `extensions`, not scattered through generic contracts.
+
+`ProviderCapabilities` describes the generic API surface a provider can declare, including streaming, structured output, native chat token counting, reasoning transport and controls, timing, prompt-cache observability, vision, tool calling, and model lifecycle. Each declared capability has a `CapabilityStatus`, optional notes, and optional evidence metadata; providers omit capabilities they do not know how to describe.
+
+`RuntimeCompatibilityRecord` is separate and applies a capability assessment to a specific provider build, model profile, and chat-template combination. Such records are future private runtime data. The public repository supplies only a sanitized shape/example and never a configured target, model path, credential, or deployment measurement. For the current conceptual example: a Qwen-class model can declare reasoning support, llama.cpp can expose reasoning transport, while an actual compatibility record may report reasoning transport as `supported` and a reasoning-budget effect as `partial`.
 
 ## Context policy
 
@@ -88,6 +94,14 @@ SearchMode is `off`, `manual`, or `auto`: `off` performs no search, `manual` req
 
 No search UI, credential, API key, network request, or provider integration exists in Phase 0C.
 
+SearchProvider remains the generic contract for an external retrieval provider that a future Tool or orchestration layer may use. It is not a Knowledge database, a ToolDefinition, or an LLM runtime. No provider-specific search fields were added in Phase 1B-3.
+
+## Capability and orchestration supplements
+
+Phase 1B-3 adds generic `PerformanceTiming`, bounded provider-cache timing, `PromptContextContribution`, `KnowledgeNamespace`, `KnowledgeReference`, `SkillProfile`, and `ToolDefinition` shapes. It also adds an optional `runtime_affinity_hint` to TaskContext for a future scheduler; current `parallel=1` behavior neither needs nor implements affinity scheduling.
+
+The detailed responsibility boundaries, context-stability semantics, cache rule, permission model, future agent-loop boundary, and explicit non-goals are in [Orchestration boundaries](orchestration-boundaries.md). The empirical prefix-cache numbers remain outside contracts in [llama.cpp prefix cache baseline](llama-cpp-prefix-cache-baseline.md).
+
 ## Host contract and public/private boundary
 
 HostProfile contains only stable identity, display name, platform (`windows` or `linux`), role, runtime-slot availability, and extensions. It deliberately excludes URL, IP address, MAC address, hostname, Wake-on-LAN data, model paths, and credentials.
@@ -96,4 +110,4 @@ The Repository remains public source only. Runtime/private data stays outside it
 
 ## Deferred work
 
-Later phases will derive language-specific adapters/types and implement persistence, routing, Context Engine behavior, model runtime control, and integrations. The Phase 0D Control API implements the separate Controller Runtime path resolver; this phase deliberately implements none of those runtime behaviors.
+Later phases will derive language-specific adapters/types and implement persistence, routing, Context Engine behavior, model runtime control, and integrations. The Phase 0D Control API implements the separate Controller Runtime path resolver; this phase deliberately implements none of those runtime behaviors. Phase 1B-3 likewise implements no Agent loop, Tool executor, Knowledge database, retrieval, prompt assembly engine, context compaction, search integration, or Prompt Generator behavior.

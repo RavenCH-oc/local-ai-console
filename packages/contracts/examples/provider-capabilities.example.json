@@ -1,0 +1,37 @@
+{
+  "contract_type": "provider_capabilities",
+  "schema_version": "1.1.0",
+  "id": "example_chat_provider_capabilities",
+  "provider": "example_chat_provider",
+  "capabilities": {
+    "streaming": {
+      "status": "supported",
+      "notes": "Illustrative status only; not a deployment measurement.",
+      "evidence": {
+        "source": "sanitized_contract_example"
+      }
+    },
+    "reasoning_budget": {
+      "status": "partial",
+      "notes": "Illustrates a transport field whose semantic effect is not fully established."
+    },
+    "server_generation_cancel": {
+      "status": "inferred",
+      "notes": "Illustrates indirect evidence without a provider-native acknowledgement."
+    },
+    "vision": {
+      "status": "unverified",
+      "notes": "Illustrates a capability that has not been tested for this example."
+    },
+    "model_lifecycle": {
+      "status": "unsupported",
+      "notes": "Illustrates a provider surface that need not implement lifecycle control."
+    },
+    "prompt_cache": {
+      "status": "unverified",
+      "notes": "Illustrates a provider surface whose behavior has not been tested."
+    }
+  },
+  "notes": "All statuses in this file are generic contract examples.",
+  "extensions": {}
+}
