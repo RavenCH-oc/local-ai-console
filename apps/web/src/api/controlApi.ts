@@ -46,12 +46,14 @@ export type PromptProjectStatus = "active" | "archived";
 export type PromptSessionStatus = "active" | "closed";
 export type PromptMessageRole = "user" | "assistant" | "system" | "tool";
 export type PromptRevisionStatus = "proposed" | "accepted" | "discarded";
+export type PromptWorkflowMode = "stable" | "balanced" | "detailed" | "preserve";
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 export interface PromptProject {
   id: string;
   title: string;
   workflow_profile_id: string;
+  workflow_mode: PromptWorkflowMode;
   created_at: string;
   updated_at: string;
   active_session_id: string | null;
@@ -104,6 +106,38 @@ export interface PromptRevision {
 export interface CreatePromptProjectInput {
   title: string;
   workflow_profile_id?: string;
+  workflow_mode?: PromptWorkflowMode;
+}
+
+export interface PromptWorkflowKnowledgeSource {
+  id: string;
+  label: string;
+  source_kind: "built_in" | "private_runtime";
+  stability: "stable" | "snapshot" | "append_only" | "dynamic";
+}
+
+export interface PromptWorkflow {
+  id: string;
+  display_name: string;
+  model_family: string;
+  supported_modes: PromptWorkflowMode[];
+  default_mode: PromptWorkflowMode;
+  knowledge_sources: PromptWorkflowKnowledgeSource[];
+}
+
+export interface PromptContextContributionPreview {
+  label: string;
+  kind: string;
+  source: string;
+  stability: "stable" | "snapshot" | "append_only" | "dynamic";
+  character_count: number;
+  token_count: number | null;
+}
+
+export interface PromptContextPreview {
+  workflow_profile_id: string;
+  workflow_mode: PromptWorkflowMode;
+  contributions: PromptContextContributionPreview[];
 }
 
 export interface UpdatePromptProjectStateInput {
@@ -164,12 +198,22 @@ export const controlApi = {
   getLlmRuntimeStatus: (): Promise<LlmRuntimeStatus> => request<LlmRuntimeStatus>("/llm/status"),
   probeLlmRuntimes: (): Promise<LlmRuntimeStatus> => request<LlmRuntimeStatus>("/llm/probe", { method: "POST" }),
   listPromptProjects: (): Promise<PromptProject[]> => request<PromptProject[]>("/prompt-projects"),
+  listPromptWorkflows: (): Promise<PromptWorkflow[]> => request<PromptWorkflow[]>("/prompt-workflows"),
   createPromptProject: (input: CreatePromptProjectInput): Promise<PromptProject> =>
     request<PromptProject>("/prompt-projects", { method: "POST", body: input }),
   getPromptProject: (projectId: string): Promise<PromptProject> =>
     request<PromptProject>(`/prompt-projects/${projectId}`),
   renamePromptProject: (projectId: string, title: string): Promise<PromptProject> =>
     request<PromptProject>(`/prompt-projects/${projectId}`, { method: "PATCH", body: { title } }),
+  updatePromptProjectWorkflow: (
+    projectId: string,
+    workflowProfileId: string,
+    workflowMode: PromptWorkflowMode,
+  ): Promise<PromptProject> =>
+    request<PromptProject>(`/prompt-projects/${projectId}/workflow`, {
+      method: "PATCH",
+      body: { workflow_profile_id: workflowProfileId, workflow_mode: workflowMode },
+    }),
   archivePromptProject: (projectId: string): Promise<PromptProject> =>
     request<PromptProject>(`/prompt-projects/${projectId}/archive`, { method: "POST" }),
   listPromptSessions: (projectId: string): Promise<PromptSession[]> =>
@@ -190,6 +234,8 @@ export const controlApi = {
     input: UpdatePromptProjectStateInput,
   ): Promise<PromptProjectState> =>
     request<PromptProjectState>(`/prompt-projects/${projectId}/state`, { method: "PUT", body: input }),
+  getPromptContextPreview: (projectId: string): Promise<PromptContextPreview> =>
+    request<PromptContextPreview>(`/prompt-projects/${projectId}/context-preview`),
   listPromptRevisions: (projectId: string): Promise<PromptRevision[]> =>
     request<PromptRevision[]>(`/prompt-projects/${projectId}/revisions`),
   createPromptRevision: (projectId: string, input: CreatePromptRevisionInput): Promise<PromptRevision> =>

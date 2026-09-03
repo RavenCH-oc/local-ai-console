@@ -1,4 +1,4 @@
-"""Focused tests for Phase 1B-3 contract-validator additions."""
+"""Focused tests for Phase 1B-3 and Phase 1C-0 contract-validator additions."""
 
 from __future__ import annotations
 
@@ -104,6 +104,39 @@ class ContractValidationTests(unittest.TestCase):
             failures,
         )
         self.assertEqual(len(failures), 2)
+
+    def test_phase_1c_0_response_semantics_require_explicit_revision_artifacts(self) -> None:
+        failures: list[str] = []
+
+        CONTRACT_VALIDATION.validate_semantics(
+            {
+                "response_type": "revision",
+                "assistant_text": "A sanitized revision proposal.",
+                "warnings": [],
+            },
+            "prompt_workbench_response",
+            self.enums(),
+            "response",
+            failures,
+        )
+        CONTRACT_VALIDATION.validate_semantics(
+            {
+                "response_type": "discussion",
+                "assistant_text": "A sanitized discussion response.",
+                "proposed_revision": {},
+                "project_state_patch": {"unsupported": ["value"]},
+                "warnings": [""],
+            },
+            "prompt_workbench_response",
+            self.enums(),
+            "response",
+            failures,
+        )
+
+        self.assertTrue(any("revision responses require proposed_revision" in failure for failure in failures))
+        self.assertTrue(any("non-revision responses cannot include proposed_revision" in failure for failure in failures))
+        self.assertTrue(any("project_state_patch has unsupported fields" in failure for failure in failures))
+        self.assertTrue(any("warnings must be an array" in failure for failure in failures))
 
 
 if __name__ == "__main__":

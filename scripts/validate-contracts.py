@@ -13,7 +13,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 CONTRACTS_ROOT = REPOSITORY_ROOT / "packages" / "contracts"
 SCHEMA_PATH = CONTRACTS_ROOT / "schemas" / "local-ai-console-contracts.schema.json"
 EXAMPLES_DIR = CONTRACTS_ROOT / "examples"
-SUPPORTED_SCHEMA_VERSIONS = frozenset(("1.0.0", "1.1.0"))
+SUPPORTED_SCHEMA_VERSIONS = frozenset(("1.0.0", "1.1.0", "1.2.0"))
 STABLE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 NAMESPACE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:/[a-z0-9][a-z0-9_-]*)*$")
 
@@ -41,6 +41,7 @@ CONTRACT_DEFINITIONS = {
     "knowledge_reference": "knowledgeReference",
     "skill_profile": "skillProfile",
     "tool_definition": "toolDefinition",
+    "prompt_workbench_response": "promptWorkbenchResponse",
 }
 
 ENUM_DEFINITIONS = {
@@ -369,11 +370,83 @@ def validate_semantics(
             f"{label}.fallback_target_preference",
             failures,
         )
+        if "skill_profile_id" in data:
+            validate_stable_id(data["skill_profile_id"], f"{label}.skill_profile_id", failures)
+        if "knowledge_sources" in data:
+            knowledge_sources = data["knowledge_sources"]
+            if not isinstance(knowledge_sources, list):
+                failures.append(f"{label}.knowledge_sources must be an array")
+            else:
+                source_ids: set[str] = set()
+                for index, source in enumerate(knowledge_sources):
+                    item_label = f"{label}.knowledge_sources[{index}]"
+                    if not isinstance(source, dict):
+                        failures.append(f"{item_label} must be an object")
+                        continue
+                    source_id = source.get("id")
+                    validate_stable_id(source_id, f"{item_label}.id", failures)
+                    if isinstance(source_id, str):
+                        if source_id in source_ids:
+                            failures.append(f"{label}.knowledge_sources contains duplicate ID {source_id!r}")
+                        source_ids.add(source_id)
+                    if source.get("source_kind") not in {"built_in", "private_runtime"}:
+                        failures.append(f"{item_label}.source_kind must be built_in or private_runtime")
+                    if not isinstance(source.get("reference"), str) or not source["reference"]:
+                        failures.append(f"{item_label}.reference must be a non-empty source reference")
+                    validate_enum(source.get("stability"), enums["context_stability"], f"{item_label}.stability", failures)
+                references = data.get("knowledge_source_references")
+                if isinstance(references, list) and set(references) != source_ids:
+                    failures.append(f"{label}.knowledge_source_references must match knowledge_sources IDs")
+        if "mode_instructions" in data:
+            mode_instructions = data["mode_instructions"]
+            if not isinstance(mode_instructions, dict):
+                failures.append(f"{label}.mode_instructions must be an object")
+            else:
+                expected_modes = {"stable", "balanced", "detailed", "preserve"}
+                if set(mode_instructions) != expected_modes:
+                    failures.append(f"{label}.mode_instructions must define all four workflow modes")
+                for mode, instruction in mode_instructions.items():
+                    if not isinstance(instruction, str) or not instruction.strip():
+                        failures.append(f"{label}.mode_instructions.{mode} must be non-empty text")
 
     if contract_type == "prompt_response":
         validate_enum(data.get("response_kind"), enums["prompt_response_kind"], f"{label}.response_kind", failures)
         if data.get("response_kind") == "revision" and not data.get("revision_id"):
             failures.append(f"{label} revision responses require revision_id")
+
+    if contract_type == "prompt_workbench_response":
+        response_type = data.get("response_type")
+        validate_enum(response_type, enums["prompt_response_kind"], f"{label}.response_type", failures)
+        proposed_revision = data.get("proposed_revision")
+        if response_type == "revision":
+            if not isinstance(proposed_revision, dict):
+                failures.append(f"{label} revision responses require proposed_revision")
+            else:
+                for field in ("positive_prompt", "negative_prompt", "parameters", "change_log"):
+                    if field not in proposed_revision:
+                        failures.append(f"{label}.proposed_revision is missing {field}")
+        elif proposed_revision is not None:
+            failures.append(f"{label} non-revision responses cannot include proposed_revision")
+        patch = data.get("project_state_patch")
+        if patch is not None:
+            if not isinstance(patch, dict) or not patch:
+                failures.append(f"{label}.project_state_patch must be a non-empty object")
+            else:
+                allowed_patch_fields = {
+                    "objective",
+                    "important_constraints_add",
+                    "must_preserve_add",
+                    "known_problems_add",
+                    "accepted_observations_add",
+                }
+                unexpected_patch_fields = sorted(set(patch).difference(allowed_patch_fields))
+                if unexpected_patch_fields:
+                    failures.append(
+                        f"{label}.project_state_patch has unsupported fields: {', '.join(unexpected_patch_fields)}"
+                    )
+        warnings = data.get("warnings")
+        if not isinstance(warnings, list) or any(not isinstance(item, str) or not item.strip() for item in warnings):
+            failures.append(f"{label}.warnings must be an array of non-empty strings")
 
     if contract_type == "provider_capabilities":
         validate_stable_id(data.get("provider"), f"{label}.provider", failures)
@@ -527,7 +600,10 @@ def validate_references(
             ("generation_preset_id", "generation_preset"),
             ("context_policy_id", "context_policy"),
         ),
-        "prompt_workflow_profile": (("preferred_model_profile_id", "model_profile"),),
+        "prompt_workflow_profile": (
+            ("preferred_model_profile_id", "model_profile"),
+            ("skill_profile_id", "skill_profile"),
+        ),
         "prompt_project": (
             ("workflow_profile_id", "prompt_workflow_profile"),
             ("active_session_id", "prompt_session"),

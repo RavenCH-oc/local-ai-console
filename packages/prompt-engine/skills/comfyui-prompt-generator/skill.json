@@ -1,0 +1,18 @@
+{
+  "contract_type": "skill_profile",
+  "schema_version": "1.1.0",
+  "id": "comfyui_prompt_generator",
+  "display_name": "ComfyUI Prompt Generator",
+  "description": "A generic procedure for discussing and proposing structured ComfyUI prompt revisions.",
+  "instruction_source": {
+    "kind": "public_package",
+    "reference": "SKILL.md",
+    "version": "1",
+    "extensions": {}
+  },
+  "required_capabilities": ["structured_output"],
+  "knowledge_namespaces": ["comfyui/anima"],
+  "allowed_tool_ids": [],
+  "default_task_kind": "prompt_generation",
+  "extensions": {}
+}

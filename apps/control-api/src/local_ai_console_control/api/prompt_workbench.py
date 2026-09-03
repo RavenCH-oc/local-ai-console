@@ -19,6 +19,7 @@ from local_ai_console_control.persistence.models import (
 )
 from local_ai_console_control.persistence.service import (
     DEFAULT_WORKFLOW_PROFILE_ID,
+    DEFAULT_WORKFLOW_MODE,
     PromptWorkbenchConflictError,
     PromptWorkbenchError,
     PromptWorkbenchNotFoundError,
@@ -38,9 +39,13 @@ from local_ai_console_control.persistence.service import (
     list_revisions,
     list_sessions,
     rename_project,
+    set_project_workflow,
     update_project_state,
     utc_timestamp,
 )
+from local_ai_console_control.prompt_workbench.catalog import PromptWorkbenchCatalog, PromptWorkbenchCatalogError
+from local_ai_console_control.prompt_workbench.context import PromptContextAssembler
+from local_ai_console_control.prompt_workbench.knowledge import KnowledgeSourceLoadError, KnowledgeSourceLoader
 
 
 router = APIRouter(prefix="/api", tags=["prompt-workbench"])
@@ -63,6 +68,19 @@ def _raise_http_error(error: PromptWorkbenchError) -> None:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Prompt Workbench request could not be completed.") from error
 
 
+def _catalog(request: Request) -> PromptWorkbenchCatalog:
+    return request.app.state.prompt_workbench_catalog
+
+
+def _validate_workflow_selection(catalog: PromptWorkbenchCatalog, workflow_profile_id: str, workflow_mode: str) -> None:
+    try:
+        workflow = catalog.get_workflow(workflow_profile_id)
+    except PromptWorkbenchCatalogError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Prompt Workbench workflow is unavailable.") from error
+    if workflow_mode not in workflow.supported_modes:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Prompt Workbench mode is unavailable.")
+
+
 def _required_text(value: str) -> str:
     normalized = value.strip()
     if not normalized:
@@ -83,6 +101,7 @@ class PromptProjectResponse(ApiModel):
     id: str
     title: str
     workflow_profile_id: str
+    workflow_mode: Literal["stable", "balanced", "detailed", "preserve"]
     created_at: datetime
     updated_at: datetime
     active_session_id: str | None
@@ -135,6 +154,7 @@ class PromptRevisionResponse(ApiModel):
 class CreateProjectRequest(ApiModel):
     title: str = Field(max_length=200)
     workflow_profile_id: str = Field(default=DEFAULT_WORKFLOW_PROFILE_ID, max_length=100)
+    workflow_mode: Literal["stable", "balanced", "detailed", "preserve"] = DEFAULT_WORKFLOW_MODE
 
     @field_validator("title", "workflow_profile_id")
     @classmethod
@@ -149,6 +169,47 @@ class RenameProjectRequest(ApiModel):
     @classmethod
     def validate_title(cls, value: str) -> str:
         return _required_text(value)
+
+
+class UpdateProjectWorkflowRequest(ApiModel):
+    workflow_profile_id: str = Field(max_length=100)
+    workflow_mode: Literal["stable", "balanced", "detailed", "preserve"]
+
+    @field_validator("workflow_profile_id")
+    @classmethod
+    def validate_workflow_profile_id(cls, value: str) -> str:
+        return _required_text(value)
+
+
+class KnowledgeSourceResponse(ApiModel):
+    id: str
+    label: str
+    source_kind: Literal["built_in", "private_runtime"]
+    stability: Literal["stable", "snapshot", "append_only", "dynamic"]
+
+
+class PromptWorkflowResponse(ApiModel):
+    id: str
+    display_name: str
+    model_family: str
+    supported_modes: list[Literal["stable", "balanced", "detailed", "preserve"]]
+    default_mode: Literal["stable", "balanced", "detailed", "preserve"]
+    knowledge_sources: list[KnowledgeSourceResponse]
+
+
+class ContextContributionPreviewResponse(ApiModel):
+    label: str
+    kind: str
+    source: str
+    stability: Literal["stable", "snapshot", "append_only", "dynamic"]
+    character_count: int
+    token_count: int | None
+
+
+class PromptContextPreviewResponse(ApiModel):
+    workflow_profile_id: str
+    workflow_mode: Literal["stable", "balanced", "detailed", "preserve"]
+    contributions: list[ContextContributionPreviewResponse]
 
 
 class CreateSessionRequest(ApiModel):
@@ -215,12 +276,32 @@ def _project_response(project: PromptProject) -> PromptProjectResponse:
         id=project.id,
         title=project.title,
         workflow_profile_id=project.workflow_profile_id,
+        workflow_mode=project.workflow_mode,
         created_at=utc_timestamp(project.created_at),
         updated_at=utc_timestamp(project.updated_at),
         active_session_id=project.active_session_id,
         current_revision_id=project.current_revision_id,
         status=project.status,
         archived_at=utc_timestamp(project.archived_at) if project.archived_at is not None else None,
+    )
+
+
+def _workflow_response(workflow) -> PromptWorkflowResponse:
+    return PromptWorkflowResponse(
+        id=workflow.id,
+        display_name=workflow.display_name,
+        model_family=workflow.model_family,
+        supported_modes=list(workflow.supported_modes),
+        default_mode=workflow.default_mode,
+        knowledge_sources=[
+            KnowledgeSourceResponse(
+                id=source.id,
+                label=source.label,
+                source_kind=source.source_kind,
+                stability=source.stability,
+            )
+            for source in workflow.knowledge_sources
+        ],
     )
 
 
@@ -278,13 +359,20 @@ def get_projects(session: DatabaseSession, include_archived: bool = False) -> li
     return [_project_response(project) for project in list_projects(session, include_archived=include_archived)]
 
 
+@router.get("/prompt-workflows", response_model=list[PromptWorkflowResponse])
+def get_workflows(request: Request) -> list[PromptWorkflowResponse]:
+    return [_workflow_response(workflow) for workflow in _catalog(request).list_workflows()]
+
+
 @router.post("/prompt-projects", response_model=PromptProjectResponse, status_code=status.HTTP_201_CREATED)
-def post_project(payload: CreateProjectRequest, session: DatabaseSession) -> PromptProjectResponse:
+def post_project(payload: CreateProjectRequest, request: Request, session: DatabaseSession) -> PromptProjectResponse:
+    _validate_workflow_selection(_catalog(request), payload.workflow_profile_id, payload.workflow_mode)
     return _project_response(
         create_project(
             session,
             title=payload.title,
             workflow_profile_id=payload.workflow_profile_id,
+            workflow_mode=payload.workflow_mode,
         )
     )
 
@@ -301,6 +389,27 @@ def get_project(project_id: str, session: DatabaseSession) -> PromptProjectRespo
 def patch_project(project_id: str, payload: RenameProjectRequest, session: DatabaseSession) -> PromptProjectResponse:
     try:
         return _project_response(rename_project(session, project_id=project_id, title=payload.title))
+    except PromptWorkbenchError as error:
+        _raise_http_error(error)
+
+
+@router.patch("/prompt-projects/{project_id}/workflow", response_model=PromptProjectResponse)
+def patch_project_workflow(
+    project_id: str,
+    payload: UpdateProjectWorkflowRequest,
+    request: Request,
+    session: DatabaseSession,
+) -> PromptProjectResponse:
+    _validate_workflow_selection(_catalog(request), payload.workflow_profile_id, payload.workflow_mode)
+    try:
+        return _project_response(
+            set_project_workflow(
+                session,
+                project_id=project_id,
+                workflow_profile_id=payload.workflow_profile_id,
+                workflow_mode=payload.workflow_mode,
+            )
+        )
     except PromptWorkbenchError as error:
         _raise_http_error(error)
 
@@ -397,6 +506,54 @@ def put_state(
         )
     except PromptWorkbenchError as error:
         _raise_http_error(error)
+
+
+@router.get("/prompt-projects/{project_id}/context-preview", response_model=PromptContextPreviewResponse)
+def get_context_preview(project_id: str, request: Request, session: DatabaseSession) -> PromptContextPreviewResponse:
+    """Return contribution metadata only; no LLM request or prompt text exposure occurs here."""
+
+    try:
+        project = get_prompt_project(session, project_id=project_id)
+        workflow = _catalog(request).get_workflow(project.workflow_profile_id)
+        skill = _catalog(request).get_skill(workflow.skill_profile_id)
+        project_state = get_project_state(session, project_id=project.id)
+        accepted_revision = (
+            get_prompt_revision(session, revision_id=project.current_revision_id)
+            if project.current_revision_id is not None
+            else None
+        )
+        session_messages = list_messages(session, session_id=project.active_session_id) if project.active_session_id else []
+        knowledge_loader = KnowledgeSourceLoader(private_knowledge_root=request.app.state.runtime_paths.knowledge)
+        context = PromptContextAssembler().assemble(
+            skill=skill,
+            workflow=workflow,
+            mode=project.workflow_mode,
+            project=project,
+            project_state=project_state,
+            accepted_revision=accepted_revision,
+            session_messages=session_messages,
+            selected_knowledge=knowledge_loader.load_for_workflow(workflow),
+            current_user_message="Context preview only; do not generate a response.",
+        )
+    except PromptWorkbenchError as error:
+        _raise_http_error(error)
+    except (KnowledgeSourceLoadError, PromptWorkbenchCatalogError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Prompt context preview is unavailable.") from error
+    return PromptContextPreviewResponse(
+        workflow_profile_id=workflow.id,
+        workflow_mode=project.workflow_mode,
+        contributions=[
+            ContextContributionPreviewResponse(
+                label=item.label,
+                kind=item.kind,
+                source=item.source,
+                stability=item.stability,
+                character_count=item.character_count,
+                token_count=item.token_count,
+            )
+            for item in context.contributions
+        ],
+    )
 
 
 @router.get("/prompt-projects/{project_id}/revisions", response_model=list[PromptRevisionResponse])

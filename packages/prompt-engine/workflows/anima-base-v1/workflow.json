@@ -1,0 +1,79 @@
+{
+  "contract_type": "prompt_workflow_profile",
+  "schema_version": "1.2.0",
+  "id": "anima_base_v1",
+  "display_name": "Anima Base v1",
+  "preferred_model_profile_id": "example_main_model",
+  "fallback_target_preference": "auto",
+  "supported_modes": ["stable", "balanced", "detailed", "preserve"],
+  "default_mode": "balanced",
+  "system_components": [],
+  "knowledge_source_references": [
+    "anima_base_v1_fundamentals",
+    "anima_base_v1_prompt_structure",
+    "anima_base_v1_composition_pose",
+    "anima_base_v1_anatomy_stability",
+    "anima_base_v1_parameters"
+  ],
+  "example_source_references": [],
+  "output_contract_ref": "prompt_workbench_response",
+  "capabilities": ["supports_system_prompt", "structured_output"],
+  "skill_profile_id": "comfyui_prompt_generator",
+  "model_family": "anima_base_v1",
+  "workflow_instructions": "Use concise, purposeful prompt elements and preserve explicit project constraints. Treat accepted revisions as authoritative artifacts until the user chooses a different proposal.",
+  "mode_instructions": {
+    "stable": "Favor structural, anatomical, and compositional stability. Prefer fewer high-information elements and avoid unnecessary synonymous stacking.",
+    "balanced": "Use a practical default balance between stability and meaningful visual detail.",
+    "detailed": "Allow purposeful material, camera, lighting, and environment detail without making the prompt longer merely for its own sake.",
+    "preserve": "Modify only requested dimensions and preserve unrelated attributes from the current accepted revision."
+  },
+  "knowledge_sources": [
+    {
+      "id": "anima_base_v1_fundamentals",
+      "label": "Fundamentals",
+      "source_kind": "built_in",
+      "reference": "knowledge/fundamentals.md",
+      "stability": "stable",
+      "token_budget": 220,
+      "extensions": {}
+    },
+    {
+      "id": "anima_base_v1_prompt_structure",
+      "label": "Prompt Structure",
+      "source_kind": "built_in",
+      "reference": "knowledge/prompt-structure.md",
+      "stability": "stable",
+      "token_budget": 220,
+      "extensions": {}
+    },
+    {
+      "id": "anima_base_v1_composition_pose",
+      "label": "Composition and Pose",
+      "source_kind": "built_in",
+      "reference": "knowledge/composition-and-pose.md",
+      "stability": "stable",
+      "token_budget": 220,
+      "extensions": {}
+    },
+    {
+      "id": "anima_base_v1_anatomy_stability",
+      "label": "Anatomy Stability",
+      "source_kind": "built_in",
+      "reference": "knowledge/anatomy-stability.md",
+      "stability": "stable",
+      "token_budget": 220,
+      "extensions": {}
+    },
+    {
+      "id": "anima_base_v1_parameters",
+      "label": "Parameters",
+      "source_kind": "built_in",
+      "reference": "knowledge/parameters.md",
+      "stability": "stable",
+      "token_budget": 180,
+      "extensions": {}
+    }
+  ],
+  "private_knowledge_namespace": "comfyui/anima",
+  "extensions": {}
+}

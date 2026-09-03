@@ -19,6 +19,7 @@ from local_ai_console_control.config.runtime_paths import (
 )
 from local_ai_console_control.persistence.database import database_path_for_runtime_data, open_database
 from local_ai_console_control.llm.bridge import LlmRuntimeBridge
+from local_ai_console_control.prompt_workbench.catalog import PromptWorkbenchCatalog, builtin_prompt_engine_root
 from local_ai_console_control.version import __version__
 
 
@@ -43,6 +44,7 @@ def create_app(
         )
         initialize_runtime_layout(runtime_paths)
         app.state.runtime_paths = runtime_paths
+        app.state.prompt_workbench_catalog = PromptWorkbenchCatalog.load(builtin_prompt_engine_root())
         database = open_database(database_path_for_runtime_data(runtime_paths.data))
         app.state.database = database
         llm_runtime_bridge = LlmRuntimeBridge(config_directory=runtime_paths.config, environ=environ)

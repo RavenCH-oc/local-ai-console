@@ -4,10 +4,13 @@ import { controlApi } from "../api/controlApi";
 import type {
   JsonValue,
   PromptMessage,
+  PromptContextPreview,
   PromptProject,
   PromptProjectState,
   PromptRevision,
   PromptSession,
+  PromptWorkflow,
+  PromptWorkflowMode,
   UpdatePromptProjectStateInput,
 } from "../api/controlApi";
 
@@ -96,6 +99,8 @@ function parseParameters(value: string): Record<string, JsonValue> | null {
 export function PromptWorkbenchPage() {
   const [projects, setProjects] = useState<PromptProject[]>([]);
   const [projectsStatus, setProjectsStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [workflows, setWorkflows] = useState<PromptWorkflow[]>([]);
+  const [workflowsStatus, setWorkflowsStatus] = useState<"loading" | "ready" | "error">("loading");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
   const [workspaceStatus, setWorkspaceStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -105,6 +110,8 @@ export function PromptWorkbenchPage() {
   const [messageContent, setMessageContent] = useState("");
   const [stateDraft, setStateDraft] = useState<StateDraft>(EMPTY_STATE_DRAFT);
   const [revisionDraft, setRevisionDraft] = useState<RevisionDraft>(EMPTY_REVISION_DRAFT);
+  const [contextPreview, setContextPreview] = useState<PromptContextPreview | null>(null);
+  const [contextPreviewStatus, setContextPreviewStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [isSaving, setIsSaving] = useState(false);
 
   const loadProjects = useCallback(async () => {
@@ -114,6 +121,16 @@ export function PromptWorkbenchPage() {
       setProjectsStatus("ready");
     } catch {
       setProjectsStatus("error");
+    }
+  }, []);
+
+  const loadWorkflows = useCallback(async () => {
+    setWorkflowsStatus("loading");
+    try {
+      setWorkflows(await controlApi.listPromptWorkflows());
+      setWorkflowsStatus("ready");
+    } catch {
+      setWorkflowsStatus("error");
     }
   }, []);
 
@@ -130,6 +147,8 @@ export function PromptWorkbenchPage() {
       const activeSessionId = project.active_session_id ?? sessions[0]?.id ?? null;
       const messages = activeSessionId ? await controlApi.listPromptMessages(activeSessionId) : [];
       setWorkspace({ project, sessions, activeSessionId, messages, projectState, revisions });
+      setContextPreview(null);
+      setContextPreviewStatus("idle");
       setRenameTitle(project.title);
       setStateDraft(stateToDraft(projectState));
       setWorkspaceStatus("ready");
@@ -141,7 +160,8 @@ export function PromptWorkbenchPage() {
 
   useEffect(() => {
     void loadProjects();
-  }, [loadProjects]);
+    void loadWorkflows();
+  }, [loadProjects, loadWorkflows]);
 
   const selectedCurrentRevision = useMemo(
     () => workspace?.revisions.find((revision) => revision.id === workspace.project.current_revision_id) ?? null,
@@ -153,17 +173,31 @@ export function PromptWorkbenchPage() {
     [workspace],
   );
 
+  const activeWorkflow = useMemo(
+    () => workflows.find((workflow) => workflow.id === workspace?.project.workflow_profile_id) ?? null,
+    [workflows, workspace?.project.workflow_profile_id],
+  );
+
   async function handleCreateProject(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!newProjectTitle.trim()) {
       setNotice("Enter a project title before creating it.");
       return;
     }
+    const defaultWorkflow = workflows[0];
+    if (!defaultWorkflow) {
+      setNotice("A built-in workflow must load before creating a project.");
+      return;
+    }
 
     setIsSaving(true);
     setNotice(null);
     try {
-      const project = await controlApi.createPromptProject({ title: newProjectTitle.trim() });
+      const project = await controlApi.createPromptProject({
+        title: newProjectTitle.trim(),
+        workflow_profile_id: defaultWorkflow.id,
+        workflow_mode: defaultWorkflow.default_mode,
+      });
       setNewProjectTitle("");
       setSelectedProjectId(project.id);
       await Promise.all([loadProjects(), loadWorkspace(project.id)]);
@@ -177,6 +211,71 @@ export function PromptWorkbenchPage() {
   async function handleSelectProject(projectId: string) {
     setSelectedProjectId(projectId);
     await loadWorkspace(projectId);
+  }
+
+  async function handleWorkflowChange(workflowProfileId: string) {
+    if (!workspace) {
+      return;
+    }
+    const workflow = workflows.find((item) => item.id === workflowProfileId);
+    if (!workflow) {
+      setNotice("The selected workflow is unavailable.");
+      return;
+    }
+    setIsSaving(true);
+    setNotice(null);
+    try {
+      const project = await controlApi.updatePromptProjectWorkflow(
+        workspace.project.id,
+        workflow.id,
+        workflow.default_mode,
+      );
+      setWorkspace((current) => (current ? { ...current, project } : current));
+      setContextPreview(null);
+      setContextPreviewStatus("idle");
+      await loadProjects();
+    } catch {
+      setNotice("The workflow selection could not be saved.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleModeChange(workflowMode: PromptWorkflowMode) {
+    if (!workspace) {
+      return;
+    }
+    setIsSaving(true);
+    setNotice(null);
+    try {
+      const project = await controlApi.updatePromptProjectWorkflow(
+        workspace.project.id,
+        workspace.project.workflow_profile_id,
+        workflowMode,
+      );
+      setWorkspace((current) => (current ? { ...current, project } : current));
+      setContextPreview(null);
+      setContextPreviewStatus("idle");
+      await loadProjects();
+    } catch {
+      setNotice("The workflow mode could not be saved.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleContextPreview() {
+    if (!workspace) {
+      return;
+    }
+    setContextPreviewStatus("loading");
+    try {
+      setContextPreview(await controlApi.getPromptContextPreview(workspace.project.id));
+      setContextPreviewStatus("ready");
+    } catch {
+      setContextPreview(null);
+      setContextPreviewStatus("error");
+    }
   }
 
   async function handleRenameProject(event: React.FormEvent<HTMLFormElement>) {
@@ -328,20 +427,37 @@ export function PromptWorkbenchPage() {
       <div className="workbench-controls" aria-label="Prompt Workbench controls">
         <label>
           Workflow
-          <select defaultValue="example_image_prompt_workflow" disabled>
-            <option value="example_image_prompt_workflow">Example Image Prompt Workflow</option>
+          <select
+            disabled={!workspace || workflowsStatus !== "ready" || isSaving}
+            onChange={(event) => void handleWorkflowChange(event.target.value)}
+            value={workspace?.project.workflow_profile_id ?? ""}
+          >
+            <option value="">Select a project</option>
+            {workflows.map((workflow) => (
+              <option key={workflow.id} value={workflow.id}>
+                {workflow.display_name}
+              </option>
+            ))}
           </select>
         </label>
         <label>
           Mode
-          <select defaultValue="balanced" disabled>
-            <option value="stable">Stable</option>
-            <option value="balanced">Balanced</option>
-            <option value="detailed">Detailed</option>
-            <option value="preserve">Preserve</option>
+          <select
+            disabled={!workspace || !activeWorkflow || isSaving}
+            onChange={(event) => void handleModeChange(event.target.value as PromptWorkflowMode)}
+            value={workspace?.project.workflow_mode ?? ""}
+          >
+            <option value="">Select a project</option>
+            {(activeWorkflow?.supported_modes ?? []).map((mode) => (
+              <option key={mode} value={mode}>
+                {mode.slice(0, 1).toUpperCase() + mode.slice(1)}
+              </option>
+            ))}
           </select>
         </label>
       </div>
+
+      {workflowsStatus === "error" ? <p className="workbench-notice">Built-in workflows are unavailable.</p> : null}
 
       {notice ? (
         <p className="workbench-notice" role="status">
@@ -423,6 +539,20 @@ export function PromptWorkbenchPage() {
           {!workspace && workspaceStatus === "idle" ? <p>Select a project to view its discussion and state.</p> : null}
           {workspace ? (
             <>
+              <section className="revision-summary" aria-labelledby="knowledge-sources-heading">
+                <h3 id="knowledge-sources-heading">Knowledge Sources</h3>
+                {activeWorkflow ? (
+                  <ul>
+                    {activeWorkflow.knowledge_sources.map((source) => (
+                      <li key={source.id}>
+                        {source.label} <span className="phase-note">({source.stability})</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>Workflow knowledge sources are unavailable.</p>
+                )}
+              </section>
               <div className="discussion-history" aria-label="Discussion history">
                 <h3>{workspace.sessions.find((item) => item.id === workspace.activeSessionId)?.title ?? "Discussion"}</h3>
                 {workspace.messages.length === 0 ? <p>No discussion notes yet.</p> : null}
@@ -516,6 +646,24 @@ export function PromptWorkbenchPage() {
                 ) : (
                   <p>No accepted revision.</p>
                 )}
+              </section>
+
+              <section className="revision-summary" aria-labelledby="context-preview-heading">
+                <h3 id="context-preview-heading">Context Preview</h3>
+                <p>Contribution metadata only. This does not send a request to an LLM.</p>
+                <button disabled={contextPreviewStatus === "loading"} onClick={() => void handleContextPreview()} type="button">
+                  {contextPreviewStatus === "loading" ? "Loading preview..." : "Preview context"}
+                </button>
+                {contextPreviewStatus === "error" ? <p role="status">Context preview is unavailable.</p> : null}
+                {contextPreview ? (
+                  <ul aria-label="Context contributions">
+                    {contextPreview.contributions.map((contribution) => (
+                      <li key={`${contribution.kind}-${contribution.source}`}>
+                        {contribution.label} — {contribution.stability}, {contribution.character_count} characters
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </section>
 
               <div className="revision-list" aria-label="Prompt revisions">

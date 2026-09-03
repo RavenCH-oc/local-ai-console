@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Phase 0C freezes the first language-neutral contract layer for Local AI Console. These contracts describe configuration and domain data shared by future controller, web, node, workflow, context, and search components. They do not implement any application behavior. Phase 1B-3 adds capability, orchestration-boundary, Knowledge, Skill, Tool, and prompt-context contracts without replacing the Phase 0C source.
+Phase 0C freezes the first language-neutral contract layer for Local AI Console. These contracts describe configuration and domain data shared by future controller, web, node, workflow, context, and search components. They do not implement any application behavior. Phase 1B-3 adds capability, orchestration-boundary, Knowledge, Skill, Tool, and prompt-context contracts without replacing the Phase 0C source. Phase 1C-0 adds the additive Prompt Workbench response and source-declaration shapes used by the first source-managed built-in workflow.
 
 The canonical serialized representation is JSON Schema Draft 2020-12 in `packages/contracts/schemas/local-ai-console-contracts.schema.json`. Sanitized examples live beside it in `packages/contracts/examples/`.
 
 ## Identity, versioning, and references
 
-Named domain objects use stable machine IDs such as `example_main_model`, `personal`, and `example_image_prompt_workflow`. Display names are for presentation only. Persisted or configurable contracts include `schema_version`; existing `1.0.0` contracts remain valid, and the additive Phase 1B-3 contract types start at `1.1.0`.
+Named domain objects use stable machine IDs such as `example_main_model`, `personal`, and `example_image_prompt_workflow`. Display names are for presentation only. Persisted or configurable contracts include `schema_version`; existing `1.0.0` and `1.1.0` contracts remain valid, and the additive Phase 1C-0 contract types start at `1.2.0`.
 
 Cross-contract links use explicit ID fields such as `preferred_model_profile_id`, `generation_preset_id`, `context_policy_id`, and `workflow_profile_id`. Contracts do not copy whole referenced objects, use a display name as an identity, or use a filesystem path as an identity.
 
@@ -80,13 +80,15 @@ Prompt workflow modes are semantic values:
 - `detailed`: increase useful material, atmosphere, lighting, camera, or visual detail without merely making a prompt longer.
 - `preserve`: modify requested dimensions while retaining unrelated accepted attributes.
 
-## Prompt project and response semantics
+## Prompt project, workflow knowledge, and response semantics
 
-PromptProject is a durable long-running prompt-work item and references its workflow, active session, and current revision. PromptSession represents the discussion session without defining a message database. PromptProjectState carries objective, constraints, preservation requirements, known problems, accepted observations, and a current revision reference so compression does not discard essential state.
+PromptProject is a durable long-running prompt-work item and references its workflow, active session, current accepted revision, and selected workflow mode. PromptSession represents the discussion session without defining a message database. PromptProjectState carries objective, constraints, preservation requirements, known problems, accepted observations, and a current revision reference so compression does not discard essential state.
 
 PromptRevision is immutable versioned prompt content with a project reference, optional parent revision, positive/negative fields, parameters, change log, and timestamp. It supports future comparison, restore, branching, and acceptance without overwriting a prompt on every turn.
 
-PromptResponse distinguishes `discussion`, `revision`, and `clarification`. Discussion and clarification may have no revision. A response with kind `revision` must reference a PromptRevision. No Prompt Generator or persistence behavior is implemented here.
+The Phase 1C-0 `knowledgeSourceDeclaration` makes source kind, public reference, stability, and optional budget explicit on a workflow. It supports public `built_in` material plus a non-serialized `private_runtime` extension boundary; it does not establish a knowledge database or retrieval system.
+
+`prompt_workbench_response` is the generic structured response shape. It distinguishes `discussion`, `revision`, and `clarification`, carries assistant text and warnings, may propose a project-state patch, and requires a proposed prompt artifact only for `revision`. It is a transport/validation contract: accepting a proposed revision remains an explicit user action, and no response automatically writes database state. No real Prompt Generator behavior is implemented by this contract.
 
 ## Search contract
 
@@ -110,4 +112,4 @@ The Repository remains public source only. Runtime/private data stays outside it
 
 ## Deferred work
 
-Later phases will derive language-specific adapters/types and implement persistence, routing, Context Engine behavior, model runtime control, and integrations. The Phase 0D Control API implements the separate Controller Runtime path resolver; this phase deliberately implements none of those runtime behaviors. Phase 1B-3 likewise implements no Agent loop, Tool executor, Knowledge database, retrieval, prompt assembly engine, context compaction, search integration, or Prompt Generator behavior.
+Later phases will derive language-specific adapters/types and implement persistence, routing, Context Engine behavior, model runtime control, and integrations. The Phase 0D Control API implements the separate Controller Runtime path resolver; this phase deliberately implements none of those runtime behaviors. Phase 1B-3 likewise implements no Agent loop, Tool executor, Knowledge database, retrieval, context compaction, search integration, or Prompt Generator behavior. Phase 1C-0 adds a deterministic, inspectable context-assembly foundation only; it makes no LLM request and implements no generation, tool execution, RAG, search, or QA decision.

@@ -7,14 +7,18 @@ import tempfile
 from pathlib import Path
 import unittest
 
+from alembic import command
 from fastapi.testclient import TestClient
-from sqlalchemy import inspect
+from sqlalchemy import create_engine, inspect, text
 
 from local_ai_console_control.config.runtime_paths import initialize_runtime_layout, resolve_runtime_paths
 from local_ai_console_control.main import create_app
+from local_ai_console_control.persistence.models import PromptProject
 from local_ai_console_control.persistence.database import (
     DatabaseSchemaError,
     database_path_for_runtime_data,
+    database_url,
+    migration_config,
     open_database,
     upgrade_database,
     validate_database_schema,
@@ -83,6 +87,44 @@ class MigrationLifecycleTests(PromptWorkbenchTestCase):
             finally:
                 database.dispose()
 
+    def test_upgrade_from_phase_1a_preserves_project_and_assigns_builtin_workflow_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            database_path = temporary_path / "console.sqlite3"
+            config = migration_config(database_path)
+            command.upgrade(config, "20260901_01")
+            engine = create_engine(database_url(database_path))
+            try:
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(
+                            "INSERT INTO prompt_projects "
+                            "(id, title, workflow_profile_id, created_at, updated_at, status) "
+                            "VALUES (:id, :title, :workflow, :created_at, :updated_at, :status)"
+                        ),
+                        {
+                            "id": "pp_legacy_project",
+                            "title": "Legacy project",
+                            "workflow": "example_image_prompt_workflow",
+                            "created_at": "2026-09-01 00:00:00",
+                            "updated_at": "2026-09-01 00:00:00",
+                            "status": "active",
+                        },
+                    )
+            finally:
+                engine.dispose()
+
+            command.upgrade(config, "head")
+            database = open_database(database_path)
+            try:
+                with database.session_factory() as session:
+                    project = session.get(PromptProject, "pp_legacy_project")
+                    assert project is not None
+                    self.assertEqual(project.workflow_profile_id, "anima_base_v1")
+                    self.assertEqual(project.workflow_mode, "balanced")
+            finally:
+                database.dispose()
+
     def test_application_rejects_an_unmigrated_database_without_recreating_it(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_path = Path(temporary_directory)
@@ -112,7 +154,28 @@ class PromptWorkbenchEndpointTests(PromptWorkbenchTestCase):
                 project = self.create_project(client, "Reusable generic study")
                 project_id = project["id"]
                 initial_session_id = project["active_session_id"]
-                self.assertEqual(project["workflow_profile_id"], "example_image_prompt_workflow")
+                self.assertEqual(project["workflow_profile_id"], "anima_base_v1")
+                self.assertEqual(project["workflow_mode"], "balanced")
+
+                workflows_response = client.get("/api/prompt-workflows")
+                self.assertEqual(workflows_response.status_code, 200)
+                workflow = workflows_response.json()[0]
+                self.assertEqual(workflow["id"], "anima_base_v1")
+                self.assertEqual(workflow["supported_modes"], ["stable", "balanced", "detailed", "preserve"])
+                self.assertEqual([item["label"] for item in workflow["knowledge_sources"]], [
+                    "Fundamentals",
+                    "Prompt Structure",
+                    "Composition and Pose",
+                    "Anatomy Stability",
+                    "Parameters",
+                ])
+
+                workflow_update = client.patch(
+                    f"/api/prompt-projects/{project_id}/workflow",
+                    json={"workflow_profile_id": "anima_base_v1", "workflow_mode": "preserve"},
+                )
+                self.assertEqual(workflow_update.status_code, 200)
+                self.assertEqual(workflow_update.json()["workflow_mode"], "preserve")
 
                 rename_response = client.patch(
                     f"/api/prompt-projects/{project_id}", json={"title": "Renamed generic study"}
@@ -137,6 +200,15 @@ class PromptWorkbenchEndpointTests(PromptWorkbenchTestCase):
                 )
                 self.assertEqual(message_response.status_code, 201)
 
+                preview_response = client.get(f"/api/prompt-projects/{project_id}/context-preview")
+                self.assertEqual(preview_response.status_code, 200)
+                preview = preview_response.json()
+                self.assertEqual(preview["workflow_mode"], "preserve")
+                self.assertEqual(preview["contributions"][0]["label"], "Base System")
+                self.assertEqual(preview["contributions"][-1]["label"], "Current Request")
+                self.assertIn("Knowledge source: Fundamentals", [item["label"] for item in preview["contributions"]])
+                self.assertTrue(all(item["token_count"] is None for item in preview["contributions"]))
+
                 session_response = client.post(
                     f"/api/prompt-projects/{project_id}/sessions", json={"title": "Alternative discussion"}
                 )
@@ -154,6 +226,7 @@ class PromptWorkbenchEndpointTests(PromptWorkbenchTestCase):
                 self.assertEqual([item["content"] for item in messages_response.json()], ["Record a manual discussion note."])
                 state_response = reloaded_client.get(f"/api/prompt-projects/{project_id}/state")
                 self.assertEqual(state_response.json()["objective"], state_payload["objective"])
+                self.assertEqual(reloaded_client.get(f"/api/prompt-projects/{project_id}").json()["workflow_mode"], "preserve")
 
                 archive_response = reloaded_client.post(f"/api/prompt-projects/{project_id}/archive")
                 self.assertEqual(archive_response.status_code, 200)
@@ -232,6 +305,13 @@ class PromptWorkbenchEndpointTests(PromptWorkbenchTestCase):
     def test_validation_missing_resources_cross_project_parent_and_invalid_transitions(self) -> None:
         with self.client() as client:
             self.assertEqual(client.post("/api/prompt-projects", json={"title": "   "}).status_code, 422)
+            self.assertEqual(
+                client.post(
+                    "/api/prompt-projects",
+                    json={"title": "Unknown workflow", "workflow_profile_id": "missing_workflow", "workflow_mode": "balanced"},
+                ).status_code,
+                422,
+            )
             self.assertEqual(client.get("/api/prompt-projects/missing").status_code, 404)
             self.assertEqual(client.get("/api/prompt-sessions/missing/messages").status_code, 404)
 

@@ -19,7 +19,8 @@ from local_ai_console_control.persistence.models import (
 )
 
 
-DEFAULT_WORKFLOW_PROFILE_ID = "example_image_prompt_workflow"
+DEFAULT_WORKFLOW_PROFILE_ID = "anima_base_v1"
+DEFAULT_WORKFLOW_MODE = "balanced"
 
 
 class PromptWorkbenchError(RuntimeError):
@@ -105,7 +106,13 @@ def list_projects(session: Session, *, include_archived: bool = False) -> Sequen
     return session.scalars(statement).all()
 
 
-def create_project(session: Session, *, title: str, workflow_profile_id: str) -> PromptProject:
+def create_project(
+    session: Session,
+    *,
+    title: str,
+    workflow_profile_id: str,
+    workflow_mode: str = DEFAULT_WORKFLOW_MODE,
+) -> PromptProject:
     """Create a project with its initial state and discussion session atomically."""
 
     now = utc_now()
@@ -113,6 +120,7 @@ def create_project(session: Session, *, title: str, workflow_profile_id: str) ->
         id=opaque_id("pp"),
         title=title,
         workflow_profile_id=workflow_profile_id,
+        workflow_mode=workflow_mode,
         created_at=now,
         updated_at=now,
         status="active",
@@ -137,6 +145,23 @@ def create_project(session: Session, *, title: str, workflow_profile_id: str) ->
         updated_at=now,
     )
     session.add_all((project, prompt_session, project_state))
+    session.commit()
+    return project
+
+
+def set_project_workflow(
+    session: Session,
+    *,
+    project_id: str,
+    workflow_profile_id: str,
+    workflow_mode: str,
+) -> PromptProject:
+    """Persist the active workflow/mode only after the caller has validated the built-in registry."""
+
+    project = _require_active_project(session, project_id)
+    project.workflow_profile_id = workflow_profile_id
+    project.workflow_mode = workflow_mode
+    _touch(project, utc_now())
     session.commit()
     return project
 

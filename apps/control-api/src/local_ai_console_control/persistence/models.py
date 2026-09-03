@@ -27,6 +27,7 @@ class PromptProject(Base):
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     workflow_profile_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    workflow_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="balanced")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     active_session_id: Mapped[str | None] = mapped_column(String(40), nullable=True)

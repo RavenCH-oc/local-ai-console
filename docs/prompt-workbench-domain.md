@@ -1,6 +1,6 @@
 # Prompt Workbench domain and persistence
 
-Phase 1A introduces private, local persistence for Prompt Workbench data. It implements no model request, prompt generation, ComfyUI integration, QA judgment, or context compression.
+Phase 1A introduces private, local persistence for Prompt Workbench data. It implements no model request, prompt generation, ComfyUI integration, QA judgment, or context compression. The Phase 1C-0 source-managed Skill, workflow, knowledge, structured-response, and context-preview foundation is documented separately in [Prompt Workbench architecture](prompt-workbench-architecture.md); it does not change the explicit persistence lifecycle described here.
 
 ## Private database lifecycle
 

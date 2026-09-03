@@ -26,7 +26,8 @@
     { "$ref": "#/$defs/knowledgeNamespace" },
     { "$ref": "#/$defs/knowledgeReference" },
     { "$ref": "#/$defs/skillProfile" },
-    { "$ref": "#/$defs/toolDefinition" }
+    { "$ref": "#/$defs/toolDefinition" },
+    { "$ref": "#/$defs/promptWorkbenchResponse" }
   ],
   "$defs": {
     "schemaVersion": {
@@ -576,6 +577,31 @@
       },
       "additionalProperties": false
     },
+    "knowledgeSourceDeclaration": {
+      "type": "object",
+      "required": ["id", "label", "source_kind", "reference", "stability"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stableId" },
+        "label": { "$ref": "#/$defs/displayName" },
+        "source_kind": { "type": "string", "enum": ["built_in", "private_runtime"] },
+        "reference": { "type": "string", "minLength": 1 },
+        "stability": { "$ref": "#/$defs/contextStability" },
+        "token_budget": { "type": "integer", "minimum": 1 },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": false
+    },
+    "promptWorkflowModeInstructions": {
+      "type": "object",
+      "required": ["stable", "balanced", "detailed", "preserve"],
+      "properties": {
+        "stable": { "type": "string", "minLength": 1 },
+        "balanced": { "type": "string", "minLength": 1 },
+        "detailed": { "type": "string", "minLength": 1 },
+        "preserve": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
     "promptWorkflowProfile": {
       "type": "object",
       "required": [
@@ -623,6 +649,16 @@
         },
         "output_contract_ref": { "$ref": "#/$defs/stableId" },
         "parameter_schema_ref": { "$ref": "#/$defs/stableId" },
+        "skill_profile_id": { "$ref": "#/$defs/stableId" },
+        "model_family": { "type": "string", "minLength": 1 },
+        "workflow_instructions": { "type": "string", "minLength": 1 },
+        "mode_instructions": { "$ref": "#/$defs/promptWorkflowModeInstructions" },
+        "knowledge_sources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/knowledgeSourceDeclaration" },
+          "uniqueItems": true
+        },
+        "private_knowledge_namespace": { "$ref": "#/$defs/namespaceId" },
         "capabilities": {
           "type": "array",
           "items": { "$ref": "#/$defs/stableId" },
@@ -652,6 +688,7 @@
         "id": { "$ref": "#/$defs/stableId" },
         "title": { "$ref": "#/$defs/displayName" },
         "workflow_profile_id": { "$ref": "#/$defs/stableId" },
+        "workflow_mode": { "$ref": "#/$defs/promptWorkflowMode" },
         "created_at": { "type": "string", "format": "date-time" },
         "updated_at": { "type": "string", "format": "date-time" },
         "active_session_id": { "$ref": "#/$defs/stableId" },
@@ -787,6 +824,74 @@
             "required": ["response_kind"]
           },
           "then": { "required": ["revision_id"] }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "projectStatePatch": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "objective": { "type": "string", "minLength": 1 },
+        "important_constraints_add": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "must_preserve_add": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "known_problems_add": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "accepted_observations_add": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "proposedPromptRevision": {
+      "type": "object",
+      "required": ["positive_prompt", "negative_prompt", "parameters", "change_log"],
+      "properties": {
+        "positive_prompt": { "type": "string", "minLength": 1 },
+        "negative_prompt": { "type": "string" },
+        "parameters": { "$ref": "#/$defs/extensions" },
+        "change_log": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "promptWorkbenchResponse": {
+      "type": "object",
+      "required": ["contract_type", "schema_version", "response_type", "assistant_text", "warnings", "extensions"],
+      "properties": {
+        "contract_type": { "const": "prompt_workbench_response" },
+        "schema_version": { "$ref": "#/$defs/schemaVersion" },
+        "response_type": { "$ref": "#/$defs/promptResponseKind" },
+        "assistant_text": { "type": "string" },
+        "proposed_revision": { "$ref": "#/$defs/proposedPromptRevision" },
+        "project_state_patch": { "$ref": "#/$defs/projectStatePatch" },
+        "warnings": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "response_type": { "const": "revision" } },
+            "required": ["response_type"]
+          },
+          "then": { "required": ["proposed_revision"] },
+          "else": { "not": { "required": ["proposed_revision"] } }
         }
       ],
       "additionalProperties": false
