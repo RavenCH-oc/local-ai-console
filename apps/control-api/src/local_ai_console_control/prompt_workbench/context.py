@@ -44,7 +44,30 @@ class PromptContext:
 
     @property
     def messages(self) -> tuple[LLMMessage, ...]:
-        return tuple(contribution.message for contribution in self.contributions)
+        """Return model-visible messages while retaining every contribution for preview.
+
+        llama.cpp's Qwen chat template accepts one leading system turn.  The
+        workbench still keeps its discrete, inspectable system contributions in
+        ``contributions``; only their stable model serialization is combined.
+        """
+
+        system_prefix: list[PromptContextContribution] = []
+        remaining: list[LLMMessage] = []
+        found_non_system = False
+        for contribution in self.contributions:
+            message = contribution.message
+            if not found_non_system and message.role is LLMMessageRole.SYSTEM:
+                system_prefix.append(contribution)
+                continue
+            found_non_system = True
+            remaining.append(message)
+        if not system_prefix:
+            return tuple(remaining)
+        serialized_system = "\n\n".join(
+            f"[Prompt Workbench contribution: {contribution.label}]\n{contribution.message.content}"
+            for contribution in system_prefix
+        )
+        return (LLMMessage(LLMMessageRole.SYSTEM, serialized_system), *remaining)
 
 
 def _system_contribution(

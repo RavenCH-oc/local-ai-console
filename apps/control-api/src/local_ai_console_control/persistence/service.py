@@ -87,6 +87,18 @@ def get_session(session: Session, *, session_id: str) -> PromptSession:
     return _require_session(session, session_id)
 
 
+def get_active_discussion_project(session: Session, *, session_id: str) -> tuple[PromptProject, PromptSession]:
+    """Return the active Project/session pair permitted to receive one discussion generation."""
+
+    prompt_session = _require_session(session, session_id)
+    if prompt_session.status != "active":
+        raise PromptWorkbenchConflictError("The Prompt Session is not active.")
+    project = _require_active_project(session, prompt_session.project_id)
+    if project.active_session_id != prompt_session.id:
+        raise PromptWorkbenchConflictError("Only the active Prompt Session can start a discussion.")
+    return project, prompt_session
+
+
 def get_revision(session: Session, *, revision_id: str) -> PromptRevision:
     """Return one revision without altering its immutable artifact content."""
 

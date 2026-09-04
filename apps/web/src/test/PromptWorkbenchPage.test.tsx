@@ -5,6 +5,8 @@ import userEvent from "@testing-library/user-event";
 import { controlApi } from "../api/controlApi";
 import type {
   PromptContextPreview,
+  PromptDiscussionStreamCallbacks,
+  PromptMessage,
   PromptProject,
   PromptProjectState,
   PromptRevision,
@@ -14,6 +16,7 @@ import type {
 import { PromptWorkbenchPage } from "../pages/PromptWorkbenchPage";
 
 vi.mock("../api/controlApi", () => ({
+  ControlApiRequestError: class ControlApiRequestError extends Error {},
   controlApi: {
     listPromptProjects: vi.fn(),
     listPromptWorkflows: vi.fn(),
@@ -26,6 +29,7 @@ vi.mock("../api/controlApi", () => ({
     createPromptSession: vi.fn(),
     listPromptMessages: vi.fn(),
     appendPromptMessage: vi.fn(),
+    streamPromptDiscussion: vi.fn(),
     getPromptProjectState: vi.fn(),
     updatePromptProjectState: vi.fn(),
     getPromptContextPreview: vi.fn(),
@@ -144,6 +148,7 @@ describe("Prompt Workbench persistence UI", () => {
     api.listPromptWorkflows.mockResolvedValue([workflow]);
     api.updatePromptProjectWorkflow.mockResolvedValue(project());
     api.getPromptContextPreview.mockResolvedValue(contextPreview);
+    api.streamPromptDiscussion.mockResolvedValue(undefined);
     configureWorkspace();
   });
 
@@ -202,6 +207,132 @@ describe("Prompt Workbench persistence UI", () => {
         accepted_observations: [],
       }),
     );
+  });
+
+  it("shows an enabled Send button while discussion generation is inactive", async () => {
+    const user = userEvent.setup();
+    api.listPromptProjects.mockResolvedValue([project()]);
+    render(<PromptWorkbenchPage />);
+
+    await selectProject(user);
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  });
+
+  it("keeps the composer stable while reasoning and text deltas stream, then reloads the persisted assistant message", async () => {
+    const user = userEvent.setup();
+    api.listPromptProjects.mockResolvedValue([project()]);
+    const persistedAssistant: PromptMessage = {
+      id: "pm_assistant",
+      session_id: session.id,
+      role: "assistant",
+      content: "Visible discussion answer.",
+      metadata: { discussion_generation: { reasoning_content: "Persisted reasoning." } },
+      created_at: "2026-09-01T00:00:01Z",
+    };
+    api.listPromptMessages
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "pm_user",
+          session_id: session.id,
+          role: "user",
+          content: "Discuss the prompt.",
+          metadata: null,
+          created_at: "2026-09-01T00:00:00Z",
+        },
+        persistedAssistant,
+      ]);
+    let callbacks: PromptDiscussionStreamCallbacks | undefined;
+    let finishStream: (() => void) | undefined;
+    api.streamPromptDiscussion.mockImplementation((_sessionId, _input, activeCallbacks) => {
+      callbacks = activeCallbacks;
+      callbacks.started({ user_message_id: "pm_user", input_tokens: 123, max_output_tokens: 1024 });
+      callbacks.reasoningDelta("Streaming reasoning.");
+      callbacks.reasoningDelta(" More reasoning.");
+      callbacks.textDelta("Streaming visible answer.");
+      callbacks.textDelta(" More visible text.");
+      return new Promise<void>((resolve) => {
+        finishStream = resolve;
+      });
+    });
+    render(<PromptWorkbenchPage />);
+
+    await selectProject(user);
+    const composer = screen.getByLabelText("Discussion message");
+    await user.type(composer, "Discuss the prompt.");
+    await user.selectOptions(screen.getByLabelText("Thinking"), "on");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Streaming visible answer. More visible text.")).toBeInTheDocument();
+    expect(screen.getByText("Streaming reasoning. More reasoning.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+    expect(screen.getByLabelText("Discussion message")).toBe(composer);
+    expect(composer).toBeDisabled();
+    expect(api.createPromptRevision).not.toHaveBeenCalled();
+
+    callbacks?.completed({ assistant_message_id: persistedAssistant.id, finish_reason: "stop", input_tokens: 123 });
+    finishStream?.();
+
+    expect(await screen.findByText("Visible discussion answer.")).toBeInTheDocument();
+    expect(screen.getByText("Persisted reasoning.")).toBeInTheDocument();
+    expect(api.streamPromptDiscussion).toHaveBeenCalledWith(
+      session.id,
+      { content: "Discuss the prompt.", thinking_mode: "on" },
+      expect.any(Object),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("stops a partial discussion, restores Send, and does not display a completed assistant", async () => {
+    const user = userEvent.setup();
+    api.listPromptProjects.mockResolvedValue([project()]);
+    let callbacks: PromptDiscussionStreamCallbacks | undefined;
+    api.streamPromptDiscussion.mockImplementation((_sessionId, _input, activeCallbacks, signal) => {
+      callbacks = activeCallbacks;
+      callbacks.started({ user_message_id: "pm_user", input_tokens: 123, max_output_tokens: 1024 });
+      callbacks.reasoningDelta("Partial reasoning.");
+      callbacks.textDelta("Incomplete assistant text.");
+      return new Promise<void>((resolve) =>
+        signal.addEventListener(
+          "abort",
+          () => {
+            callbacks?.cancelled();
+            resolve();
+          },
+          { once: true },
+        ),
+      );
+    });
+    render(<PromptWorkbenchPage />);
+
+    await selectProject(user);
+    await user.type(screen.getByLabelText("Discussion message"), "Stop this discussion.");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Incomplete assistant text.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+
+    expect(await screen.findByText("Discussion stopped. The incomplete assistant response was not saved.")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Send" })).toBeEnabled();
+    expect(screen.queryByText("Incomplete assistant text.")).not.toBeInTheDocument();
+    expect(api.createPromptRevision).not.toHaveBeenCalled();
+  });
+
+  it("renders a sanitized preflight error and returns to Send state", async () => {
+    const user = userEvent.setup();
+    api.listPromptProjects.mockResolvedValue([project()]);
+    api.streamPromptDiscussion.mockImplementation(async (_sessionId, _input, callbacks) => {
+      callbacks.error({ code: "input_token_preflight_failed", message: "Input-token preflight failed." });
+    });
+    render(<PromptWorkbenchPage />);
+
+    await selectProject(user);
+    await user.type(screen.getByLabelText("Discussion message"), "Test provider error.");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Input-token preflight failed.")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Send" })).toBeInTheDocument();
+    expect(api.createPromptRevision).not.toHaveBeenCalled();
   });
 
   it("loads built-in workflow metadata, persists mode selection, and exposes context preview", async () => {

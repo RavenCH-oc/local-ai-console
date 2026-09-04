@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { controlApi } from "../api/controlApi";
+import { ControlApiRequestError, controlApi } from "../api/controlApi";
+import { useDiscussionAutoScroll } from "./useDiscussionAutoScroll";
 import type {
   JsonValue,
   PromptMessage,
   PromptContextPreview,
+  PromptDiscussionThinkingMode,
   PromptProject,
   PromptProjectState,
   PromptRevision,
@@ -36,6 +38,12 @@ interface RevisionDraft {
   negativePrompt: string;
   parameters: string;
   changeLog: string;
+}
+
+interface ActiveDiscussion {
+  userContent: string;
+  visibleContent: string;
+  reasoningContent: string;
 }
 
 const EMPTY_STATE_DRAFT: StateDraft = {
@@ -96,6 +104,15 @@ function parseParameters(value: string): Record<string, JsonValue> | null {
   }
 }
 
+function persistedReasoning(message: PromptMessage): string | null {
+  const generation = message.metadata?.discussion_generation;
+  if (generation === null || typeof generation !== "object" || Array.isArray(generation)) {
+    return null;
+  }
+  const reasoning = generation.reasoning_content;
+  return typeof reasoning === "string" && reasoning ? reasoning : null;
+}
+
 export function PromptWorkbenchPage() {
   const [projects, setProjects] = useState<PromptProject[]>([]);
   const [projectsStatus, setProjectsStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -113,6 +130,15 @@ export function PromptWorkbenchPage() {
   const [contextPreview, setContextPreview] = useState<PromptContextPreview | null>(null);
   const [contextPreviewStatus, setContextPreviewStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [isSaving, setIsSaving] = useState(false);
+  const [thinkingMode, setThinkingMode] = useState<PromptDiscussionThinkingMode>("auto");
+  const [activeDiscussion, setActiveDiscussion] = useState<ActiveDiscussion | null>(null);
+  const discussionAbortController = useRef<AbortController | null>(null);
+  const isGenerating = activeDiscussion !== null;
+  const { followLatestMessage, handleMessageListScroll, messageListRef } = useDiscussionAutoScroll(
+    activeDiscussion?.reasoningContent,
+    activeDiscussion?.visibleContent,
+    workspace?.messages.length ?? 0,
+  );
 
   const loadProjects = useCallback(async () => {
     setProjectsStatus("loading");
@@ -162,6 +188,13 @@ export function PromptWorkbenchPage() {
     void loadProjects();
     void loadWorkflows();
   }, [loadProjects, loadWorkflows]);
+
+  useEffect(
+    () => () => {
+      discussionAbortController.current?.abort();
+    },
+    [],
+  );
 
   const selectedCurrentRevision = useMemo(
     () => workspace?.revisions.find((revision) => revision.id === workspace.project.current_revision_id) ?? null,
@@ -318,24 +351,74 @@ export function PromptWorkbenchPage() {
     }
   }
 
-  async function handleAppendMessage(event: React.FormEvent<HTMLFormElement>) {
+  async function handleDiscussion(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!workspace?.activeSessionId || !messageContent.trim()) {
-      setNotice("Enter a discussion note before saving it.");
+      setNotice("Enter a discussion message before sending it.");
       return;
     }
 
-    setIsSaving(true);
+    const sessionId = workspace.activeSessionId;
+    const projectId = workspace.project.id;
+    const userContent = messageContent.trim();
+    const abortController = new AbortController();
+    let terminalNotice: string | null = null;
+    discussionAbortController.current = abortController;
+    followLatestMessage();
+    setActiveDiscussion({ userContent, visibleContent: "", reasoningContent: "" });
     setNotice(null);
     try {
-      const message = await controlApi.appendPromptMessage(workspace.activeSessionId, messageContent.trim());
-      setWorkspace((current) => (current ? { ...current, messages: [...current.messages, message] } : current));
-      setMessageContent("");
-    } catch {
-      setNotice("The discussion note could not be saved.");
+      await controlApi.streamPromptDiscussion(
+        sessionId,
+        { content: userContent, thinking_mode: thinkingMode },
+        {
+          started: () => {
+            setMessageContent("");
+          },
+          reasoningDelta: (text) => {
+            setActiveDiscussion((current) =>
+              current ? { ...current, reasoningContent: current.reasoningContent + text } : current,
+            );
+          },
+          textDelta: (text) => {
+            setActiveDiscussion((current) =>
+              current ? { ...current, visibleContent: current.visibleContent + text } : current,
+            );
+          },
+          completed: () => {
+            setNotice(null);
+          },
+          cancelled: () => {
+            terminalNotice = "Discussion stopped. The incomplete assistant response was not saved.";
+          },
+          error: (streamError) => {
+            terminalNotice = streamError.message;
+          },
+        },
+        abortController.signal,
+      );
+      if (abortController.signal.aborted) {
+        terminalNotice = "Discussion stopped. The incomplete assistant response was not saved.";
+      }
+    } catch (error) {
+      terminalNotice =
+        error instanceof ControlApiRequestError
+          ? error.message
+          : "The Prompt Workbench discussion could not be completed.";
     } finally {
-      setIsSaving(false);
+      if (discussionAbortController.current === abortController) {
+        discussionAbortController.current = null;
+        setActiveDiscussion(null);
+        await Promise.all([loadProjects(), loadWorkspace(projectId)]);
+        if (terminalNotice) {
+          setNotice(terminalNotice);
+        }
+      }
     }
+  }
+
+  function handleStopDiscussion() {
+    discussionAbortController.current?.abort();
   }
 
   async function handleSaveState(event: React.FormEvent<HTMLFormElement>) {
@@ -421,14 +504,14 @@ export function PromptWorkbenchPage() {
           <p className="eyebrow">Private local workspace</p>
           <h1 id="prompt-workbench-heading">Prompt Workbench</h1>
         </div>
-        <p className="phase-note">Manual domain and persistence foundation — no LLM generation</p>
+          <p className="phase-note">LLM-backed discussion only — no LLM PromptRevision generation</p>
       </div>
 
       <div className="workbench-controls" aria-label="Prompt Workbench controls">
         <label>
           Workflow
           <select
-            disabled={!workspace || workflowsStatus !== "ready" || isSaving}
+            disabled={!workspace || workflowsStatus !== "ready" || isSaving || isGenerating}
             onChange={(event) => void handleWorkflowChange(event.target.value)}
             value={workspace?.project.workflow_profile_id ?? ""}
           >
@@ -443,7 +526,7 @@ export function PromptWorkbenchPage() {
         <label>
           Mode
           <select
-            disabled={!workspace || !activeWorkflow || isSaving}
+            disabled={!workspace || !activeWorkflow || isSaving || isGenerating}
             onChange={(event) => void handleModeChange(event.target.value as PromptWorkflowMode)}
             value={workspace?.project.workflow_mode ?? ""}
           >
@@ -477,7 +560,7 @@ export function PromptWorkbenchPage() {
                 value={newProjectTitle}
               />
             </label>
-            <button disabled={isSaving} type="submit">
+            <button disabled={isSaving || isGenerating} type="submit">
               New Project
             </button>
           </form>
@@ -497,6 +580,7 @@ export function PromptWorkbenchPage() {
               <button
                 aria-pressed={selectedProjectId === project.id}
                 className={selectedProjectId === project.id ? "project-list-item is-selected" : "project-list-item"}
+                disabled={isGenerating}
                 key={project.id}
                 onClick={() => void handleSelectProject(project.id)}
                 type="button"
@@ -514,18 +598,18 @@ export function PromptWorkbenchPage() {
                   Project name
                   <input onChange={(event) => setRenameTitle(event.target.value)} value={renameTitle} />
                 </label>
-                <button disabled={isSaving} type="submit">
+                <button disabled={isSaving || isGenerating} type="submit">
                   Save name
                 </button>
               </form>
-              <button className="danger-button" disabled={isSaving} onClick={() => void handleArchiveProject()} type="button">
+              <button className="danger-button" disabled={isSaving || isGenerating} onClick={() => void handleArchiveProject()} type="button">
                 Archive project
               </button>
             </div>
           ) : null}
         </section>
 
-        <section className="workbench-panel" aria-labelledby="discussion-heading">
+        <section className="workbench-panel workbench-panel--discussion" aria-labelledby="discussion-heading">
           <h2 id="discussion-heading">Discussion / Project State</h2>
           {workspaceStatus === "loading" ? <p role="status">Loading project workspace...</p> : null}
           {workspaceStatus === "error" && selectedProjectId ? (
@@ -553,29 +637,78 @@ export function PromptWorkbenchPage() {
                   <p>Workflow knowledge sources are unavailable.</p>
                 )}
               </section>
-              <div className="discussion-history" aria-label="Discussion history">
+              <div
+                className="discussion-history"
+                aria-label="Discussion history"
+                onScroll={handleMessageListScroll}
+                ref={messageListRef}
+                tabIndex={0}
+              >
                 <h3>{workspace.sessions.find((item) => item.id === workspace.activeSessionId)?.title ?? "Discussion"}</h3>
                 {workspace.messages.length === 0 ? <p>No discussion notes yet.</p> : null}
                 {workspace.messages.map((message) => (
                   <article className="discussion-message" key={message.id}>
                     <strong>{message.role}</strong>
+                    {message.role === "assistant" && persistedReasoning(message) ? (
+                      <details>
+                        <summary>Thinking</summary>
+                        <p>{persistedReasoning(message)}</p>
+                      </details>
+                    ) : null}
                     <p>{message.content}</p>
                   </article>
                 ))}
+                {activeDiscussion ? (
+                  <>
+                    <article className="discussion-message">
+                      <strong>user</strong>
+                      <p>{activeDiscussion.userContent}</p>
+                    </article>
+                    <article className="discussion-message">
+                      <strong>assistant</strong>
+                      {activeDiscussion.reasoningContent ? (
+                        <details open>
+                          <summary>Thinking…</summary>
+                          <p>{activeDiscussion.reasoningContent}</p>
+                        </details>
+                      ) : null}
+                      <p>{activeDiscussion.visibleContent || "Generating discussion…"}</p>
+                    </article>
+                  </>
+                ) : null}
               </div>
-              <form className="stacked-form" onSubmit={handleAppendMessage}>
+              <form className="stacked-form discussion-composer" onSubmit={handleDiscussion}>
                 <label>
-                  Discussion note
+                  Discussion message
                   <textarea
+                    disabled={isGenerating}
                     onChange={(event) => setMessageContent(event.target.value)}
-                    placeholder="Add a manual discussion note"
+                    placeholder="Ask about the current prompt design"
                     rows={3}
                     value={messageContent}
                   />
                 </label>
-                <button disabled={isSaving || !workspace.activeSessionId} type="submit">
-                  Save discussion note
-                </button>
+                <label>
+                  Thinking
+                  <select
+                    disabled={isGenerating}
+                    onChange={(event) => setThinkingMode(event.target.value as PromptDiscussionThinkingMode)}
+                    value={thinkingMode}
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="off">Off</option>
+                    <option value="on">On</option>
+                  </select>
+                </label>
+                {isGenerating ? (
+                  <button onClick={handleStopDiscussion} type="button">
+                    Stop
+                  </button>
+                ) : (
+                  <button disabled={isSaving || !workspace.activeSessionId} type="submit">
+                    Send
+                  </button>
+                )}
               </form>
 
               <form className="state-editor stacked-form" onSubmit={handleSaveState}>
@@ -624,7 +757,7 @@ export function PromptWorkbenchPage() {
                     value={stateDraft.acceptedObservations}
                   />
                 </label>
-                <button disabled={isSaving} type="submit">
+                <button disabled={isSaving || isGenerating} type="submit">
                   Save project state
                 </button>
               </form>
@@ -651,7 +784,7 @@ export function PromptWorkbenchPage() {
               <section className="revision-summary" aria-labelledby="context-preview-heading">
                 <h3 id="context-preview-heading">Context Preview</h3>
                 <p>Contribution metadata only. This does not send a request to an LLM.</p>
-                <button disabled={contextPreviewStatus === "loading"} onClick={() => void handleContextPreview()} type="button">
+                <button disabled={contextPreviewStatus === "loading" || isGenerating} onClick={() => void handleContextPreview()} type="button">
                   {contextPreviewStatus === "loading" ? "Loading preview..." : "Preview context"}
                 </button>
                 {contextPreviewStatus === "error" ? <p role="status">Context preview is unavailable.</p> : null}
@@ -683,12 +816,12 @@ export function PromptWorkbenchPage() {
                     </p>
                     {revision.status === "proposed" ? (
                       <div className="revision-actions">
-                        <button disabled={isSaving} onClick={() => void handleRevisionAction(revision.id, "accept")} type="button">
+                        <button disabled={isSaving || isGenerating} onClick={() => void handleRevisionAction(revision.id, "accept")} type="button">
                           Accept
                         </button>
                         <button
                           className="secondary-button"
-                          disabled={isSaving}
+                          disabled={isSaving || isGenerating}
                           onClick={() => void handleRevisionAction(revision.id, "discard")}
                           type="button"
                         >
@@ -735,7 +868,7 @@ export function PromptWorkbenchPage() {
                     value={revisionDraft.changeLog}
                   />
                 </label>
-                <button disabled={isSaving} type="submit">
+                <button disabled={isSaving || isGenerating} type="submit">
                   Propose revision
                 </button>
               </form>

@@ -47,6 +47,7 @@ export type PromptSessionStatus = "active" | "closed";
 export type PromptMessageRole = "user" | "assistant" | "system" | "tool";
 export type PromptRevisionStatus = "proposed" | "accepted" | "discarded";
 export type PromptWorkflowMode = "stable" | "balanced" | "detailed" | "preserve";
+export type PromptDiscussionThinkingMode = "auto" | "off" | "on";
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 export interface PromptProject {
@@ -140,6 +141,15 @@ export interface PromptContextPreview {
   contributions: PromptContextContributionPreview[];
 }
 
+export interface PromptDiscussionStreamCallbacks {
+  started: (event: { user_message_id: string; input_tokens: number; max_output_tokens: number }) => void;
+  reasoningDelta: (text: string) => void;
+  textDelta: (text: string) => void;
+  completed: (event: { assistant_message_id: string; finish_reason: string; input_tokens: number }) => void;
+  cancelled: () => void;
+  error: (event: { code: string; message: string }) => void;
+}
+
 export interface UpdatePromptProjectStateInput {
   objective: string;
   important_constraints: string[];
@@ -157,8 +167,8 @@ export interface CreatePromptRevisionInput {
 }
 
 export class ControlApiRequestError extends Error {
-  constructor() {
-    super("The Controller API request did not succeed.");
+  constructor(message = "The Controller API request did not succeed.") {
+    super(message);
     this.name = "ControlApiRequestError";
   }
 }
@@ -185,10 +195,159 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   if (!response.ok) {
-    throw new ControlApiRequestError();
+    throw await responseError(response);
   }
 
   return (await response.json()) as T;
+}
+
+async function responseError(response: Response): Promise<ControlApiRequestError> {
+  try {
+    const payload: unknown = await response.json();
+    if (
+      payload !== null &&
+      typeof payload === "object" &&
+      "detail" in payload &&
+      typeof payload.detail === "string" &&
+      payload.detail.trim()
+    ) {
+      return new ControlApiRequestError(payload.detail);
+    }
+  } catch {
+    // A non-JSON error must still stay generic at the browser boundary.
+  }
+  return new ControlApiRequestError();
+}
+
+function parseDiscussionEvent(block: string): { event: string; data: Record<string, unknown> } {
+  let event = "";
+  const dataLines: string[] = [];
+  for (const line of block.split("\n")) {
+    if (line.startsWith("event:")) {
+      event = line.slice("event:".length).trim();
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trim());
+    }
+  }
+  if (!event || dataLines.length === 0) {
+    throw new ControlApiRequestError("Prompt discussion stream data was invalid.");
+  }
+  try {
+    const parsed: unknown = JSON.parse(dataLines.join("\n"));
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return { event, data: parsed as Record<string, unknown> };
+    }
+  } catch {
+    // Use the same safe error for malformed controller events.
+  }
+  throw new ControlApiRequestError("Prompt discussion stream data was invalid.");
+}
+
+function requiredString(data: Record<string, unknown>, name: string): string {
+  const value = data[name];
+  if (typeof value !== "string" || !value) {
+    throw new ControlApiRequestError("Prompt discussion stream data was invalid.");
+  }
+  return value;
+}
+
+function requiredNumber(data: Record<string, unknown>, name: string): number {
+  const value = data[name];
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new ControlApiRequestError("Prompt discussion stream data was invalid.");
+  }
+  return value;
+}
+
+function dispatchDiscussionEvent(
+  event: string,
+  data: Record<string, unknown>,
+  callbacks: PromptDiscussionStreamCallbacks,
+): void {
+  if (event === "started") {
+    callbacks.started({
+      user_message_id: requiredString(data, "user_message_id"),
+      input_tokens: requiredNumber(data, "input_tokens"),
+      max_output_tokens: requiredNumber(data, "max_output_tokens"),
+    });
+  } else if (event === "reasoning_delta") {
+    callbacks.reasoningDelta(requiredString(data, "text"));
+  } else if (event === "text_delta") {
+    callbacks.textDelta(requiredString(data, "text"));
+  } else if (event === "completed") {
+    callbacks.completed({
+      assistant_message_id: requiredString(data, "assistant_message_id"),
+      finish_reason: requiredString(data, "finish_reason"),
+      input_tokens: requiredNumber(data, "input_tokens"),
+    });
+  } else if (event === "cancelled") {
+    callbacks.cancelled();
+  } else if (event === "error") {
+    callbacks.error({ code: requiredString(data, "code"), message: requiredString(data, "message") });
+  } else {
+    throw new ControlApiRequestError("Prompt discussion stream data was invalid.");
+  }
+}
+
+async function streamPromptDiscussion(
+  sessionId: string,
+  input: { content: string; thinking_mode: PromptDiscussionThinkingMode },
+  callbacks: PromptDiscussionStreamCallbacks,
+  signal: AbortSignal,
+): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/prompt-sessions/${sessionId}/discussion/stream`, {
+      method: "POST",
+      headers: { Accept: "text/event-stream", "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      signal,
+    });
+  } catch {
+    if (signal.aborted) {
+      return;
+    }
+    throw new ControlApiRequestError("The Prompt Workbench discussion stream could not be started.");
+  }
+  if (!response.ok) {
+    throw await responseError(response);
+  }
+  if (!response.body) {
+    throw new ControlApiRequestError("The Prompt Workbench discussion stream was unavailable.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const consume = () => {
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary >= 0) {
+      const block = buffer.slice(0, boundary).replace(/\r/g, "");
+      buffer = buffer.slice(boundary + 2);
+      if (block.trim()) {
+        const parsed = parseDiscussionEvent(block);
+        dispatchDiscussionEvent(parsed.event, parsed.data, callbacks);
+      }
+      boundary = buffer.indexOf("\n\n");
+    }
+  };
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      consume();
+    }
+    buffer += decoder.decode();
+    consume();
+    if (buffer.trim()) {
+      throw new ControlApiRequestError("Prompt discussion stream data was incomplete.");
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 export const controlApi = {
@@ -227,6 +386,7 @@ export const controlApi = {
       method: "POST",
       body: { role: "user", content },
     }),
+  streamPromptDiscussion,
   getPromptProjectState: (projectId: string): Promise<PromptProjectState> =>
     request<PromptProjectState>(`/prompt-projects/${projectId}/state`),
   updatePromptProjectState: (

@@ -40,8 +40,17 @@ class LlamaCppClientErrorKind(StrEnum):
 
 
 class LlamaCppClientError(RuntimeError):
-    def __init__(self, kind: LlamaCppClientErrorKind) -> None:
+    """A provider failure with only a stable category and optional HTTP status.
+
+    Response bodies, endpoints, and headers deliberately do not become exception
+    data.  The status is sufficient for a local, opt-in diagnostic to distinguish
+    a rejected request from an unavailable runtime without exposing private
+    runtime configuration.
+    """
+
+    def __init__(self, kind: LlamaCppClientErrorKind, *, http_status: int | None = None) -> None:
         self.kind = kind
+        self.http_status = http_status
         super().__init__(f"llama.cpp request failed: {kind.value}")
 
 
@@ -168,6 +177,44 @@ class LlamaCppClient:
         if not isinstance(count, int) or isinstance(count, bool) or count < 0:
             raise LlamaCppClientError(LlamaCppClientErrorKind.UNEXPECTED_RESPONSE)
         return LLMTokenCountResult(input_tokens=count, provider_metadata={"provider": "llama_cpp"})
+
+    def safe_request_shape(self, request: LLMGenerationRequest, *, stream: bool) -> dict[str, JsonValue]:
+        """Describe the mapped request without retaining prompt text or private config values."""
+
+        payload = self._chat_payload(request, stream=stream)
+        template_kwargs = payload.get("chat_template_kwargs")
+        if isinstance(template_kwargs, dict):
+            safe_template_kwargs: JsonValue = {
+                key: value
+                for key, value in template_kwargs.items()
+                if key == "enable_thinking" and isinstance(value, bool)
+            }
+        else:
+            safe_template_kwargs = None
+        return {
+            "adapter": "llama_cpp",
+            "transport": "chat_completions",
+            "stream": stream,
+            "request_keys": sorted(payload),
+            "message_count": len(request.messages),
+            "message_roles": [message.role.value for message in request.messages],
+            "system_message_count": sum(message.role.value == "system" for message in request.messages),
+            "message_content_types": sorted({type(message.content).__name__ for message in request.messages}),
+            "model_field": (
+                "request_preference"
+                if request.model_preference is not None
+                else "configured_default"
+                if self._slot_config.expected_model_alias is not None
+                else "omitted"
+            ),
+            "chat_template_kwargs": safe_template_kwargs,
+            "reasoning_mode": request.reasoning.mode.value,
+            "reasoning_budget_field": "thinking_budget_tokens" in payload,
+            "realtime_reasoning_control_field": "reasoning_control" in payload,
+            "max_tokens": payload.get("max_tokens"),
+            "structured_output_field": "response_format" in payload,
+            "null_field_names": sorted(key for key, value in payload.items() if value is None),
+        }
 
     async def end_reasoning(self, completion_id: str) -> None:
         """Stop reasoning only for a completion that opted into llama.cpp reasoning control."""
@@ -399,11 +446,11 @@ class LlamaCppClient:
         except httpx.RequestError as error:
             raise LlamaCppClientError(LlamaCppClientErrorKind.CONNECTION_FAILURE) from error
         if response.status_code in {401, 403}:
-            raise LlamaCppClientError(LlamaCppClientErrorKind.AUTHENTICATION_FAILURE)
+            raise LlamaCppClientError(LlamaCppClientErrorKind.AUTHENTICATION_FAILURE, http_status=response.status_code)
         if unsupported_capability and response.status_code in {400, 404, 405, 501}:
             raise LlamaCppUnsupportedCapabilityError()
         if response.is_error:
-            raise LlamaCppClientError(LlamaCppClientErrorKind.PROVIDER_FAILURE)
+            raise LlamaCppClientError(LlamaCppClientErrorKind.PROVIDER_FAILURE, http_status=response.status_code)
         return response
 
     def _chat_payload(self, request: LLMGenerationRequest, *, stream: bool) -> dict[str, JsonValue]:

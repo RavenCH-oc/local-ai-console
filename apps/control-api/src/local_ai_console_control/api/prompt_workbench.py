@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 from sqlalchemy.orm import Session
 
@@ -45,6 +47,11 @@ from local_ai_console_control.persistence.service import (
 )
 from local_ai_console_control.prompt_workbench.catalog import PromptWorkbenchCatalog, PromptWorkbenchCatalogError
 from local_ai_console_control.prompt_workbench.context import PromptContextAssembler
+from local_ai_console_control.prompt_workbench.discussion import (
+    PromptDiscussionError,
+    PromptDiscussionService,
+    PromptDiscussionStreamEvent,
+)
 from local_ai_console_control.prompt_workbench.knowledge import KnowledgeSourceLoadError, KnowledgeSourceLoader
 
 
@@ -235,6 +242,18 @@ class AppendMessageRequest(ApiModel):
         return _required_text(value)
 
 
+class DiscussionStreamRequest(ApiModel):
+    """The browser supplies only its current text and reasoning preference."""
+
+    content: str = Field(max_length=20_000)
+    thinking_mode: Literal["auto", "off", "on"] = "auto"
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value: str) -> str:
+        return _required_text(value)
+
+
 class UpdateProjectStateRequest(ApiModel):
     objective: str = ""
     important_constraints: list[str] = Field(default_factory=list)
@@ -352,6 +371,21 @@ def _revision_response(revision: PromptRevision) -> PromptRevisionResponse:
         status=revision.status,
         created_at=utc_timestamp(revision.created_at),
     )
+
+
+def _discussion_service(request: Request) -> PromptDiscussionService:
+    return PromptDiscussionService(
+        llm_service=request.app.state.llm_service,
+        catalog=_catalog(request),
+        knowledge_loader=KnowledgeSourceLoader(private_knowledge_root=request.app.state.runtime_paths.knowledge),
+        coordinator=request.app.state.prompt_discussion_coordinator,
+    )
+
+
+def _sse_event(event: PromptDiscussionStreamEvent) -> str:
+    """Encode the Controller's finite event types without proxying provider SSE frames."""
+
+    return f"event: {event.kind}\ndata: {json.dumps(dict(event.data), ensure_ascii=False, separators=(',', ':'))}\n\n"
 
 
 @router.get("/prompt-projects", response_model=list[PromptProjectResponse])
@@ -476,6 +510,41 @@ def post_message(session_id: str, payload: AppendMessageRequest, session: Databa
         )
     except PromptWorkbenchError as error:
         _raise_http_error(error)
+
+
+@router.post("/prompt-sessions/{session_id}/discussion/stream")
+async def post_discussion_stream(
+    session_id: str,
+    payload: DiscussionStreamRequest,
+    request: Request,
+    session: DatabaseSession,
+) -> StreamingResponse:
+    """Persist one user turn, stream a discussion-only response, then persist one complete visible assistant turn."""
+
+    discussion_service = _discussion_service(request)
+    try:
+        prepared = await discussion_service.prepare(
+            session,
+            session_id=session_id,
+            user_content=payload.content,
+            thinking_mode=payload.thinking_mode,
+        )
+    except PromptDiscussionError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.message) from error
+    except PromptWorkbenchError as error:
+        _raise_http_error(error)
+
+    async def stream_events():
+        database: Database = request.app.state.database
+        with database.session_factory() as stream_session:
+            async for event in discussion_service.stream(stream_session, prepared):
+                yield _sse_event(event)
+
+    return StreamingResponse(
+        stream_events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/prompt-projects/{project_id}/state", response_model=PromptProjectStateResponse)

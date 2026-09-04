@@ -293,6 +293,12 @@ textarea:disabled {
   border-right: 0;
 }
 
+.workbench-panel--discussion {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .workbench-panel textarea {
   width: 100%;
   min-width: 0;
@@ -395,6 +401,20 @@ textarea:disabled {
 .revision-summary,
 .revision-list {
   margin-top: 16px;
+}
+
+.discussion-history {
+  height: clamp(18rem, 42vh, 38rem);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  overflow-anchor: none;
+}
+
+.discussion-composer {
+  flex: 0 0 auto;
+  margin-top: 14px;
 }
 
 .discussion-history h3,

@@ -168,6 +168,10 @@ class PromptEngineTests(unittest.TestCase):
         self.assertEqual(context.contributions[0].label, "Base System")
         self.assertEqual(context.contributions[-1].label, "Current Request")
         self.assertEqual(context.messages[-1].content, "Only change the requested dimension.")
+        self.assertEqual(sum(message.role.value == "system" for message in context.messages), 1)
+        self.assertIn("[Prompt Workbench contribution: Base System]", context.messages[0].content)
+        self.assertIn("[Prompt Workbench contribution: Skill]", context.messages[0].content)
+        self.assertIn("Knowledge source: Fundamentals", context.messages[0].content)
         self.assertIn("Accepted Revision", [item.label for item in context.contributions])
         discussion = [item for item in context.contributions if item.kind == "discussion"]
         self.assertEqual([item.message.content for item in discussion], ["First discussion message.", "Second discussion message."])

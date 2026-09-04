@@ -19,7 +19,9 @@ from local_ai_console_control.config.runtime_paths import (
 )
 from local_ai_console_control.persistence.database import database_path_for_runtime_data, open_database
 from local_ai_console_control.llm.bridge import LlmRuntimeBridge
+from local_ai_console_control.llm.service import LLMService
 from local_ai_console_control.prompt_workbench.catalog import PromptWorkbenchCatalog, builtin_prompt_engine_root
+from local_ai_console_control.prompt_workbench.discussion import PromptDiscussionCoordinator
 from local_ai_console_control.version import __version__
 
 
@@ -29,6 +31,7 @@ def create_app(
     environ: Mapping[str, str] | None = None,
     platform_name: str | None = None,
     local_appdata: Path | str | None = None,
+    llm_service: LLMService | None = None,
 ) -> FastAPI:
     """Create the API; runtime directories are initialized during startup only."""
 
@@ -49,6 +52,8 @@ def create_app(
         app.state.database = database
         llm_runtime_bridge = LlmRuntimeBridge(config_directory=runtime_paths.config, environ=environ)
         app.state.llm_runtime_bridge = llm_runtime_bridge
+        app.state.llm_service = llm_service or llm_runtime_bridge.service
+        app.state.prompt_discussion_coordinator = PromptDiscussionCoordinator()
         try:
             yield
         finally:
